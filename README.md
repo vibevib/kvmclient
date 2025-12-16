@@ -1,6 +1,8 @@
 # KVM Client
 
-A minimal Electron-based remote control client for KVM devices.
+> **Warning:** This is fully vibecoded shitty code.
+
+A simple wrapper around [GL.iNet hardware KVM](https://www.gl-inet.com/) web UI aiming to improve the UX. It blocks host hotkeys (so that `Cmd+W` doesn't close your browser window on the host computer), hides excessive controls, and improves the contrast of the video stream.
 
 ## Features
 
