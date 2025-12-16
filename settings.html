@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Settings</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 24px;
+      background: #161616;
+      color: #e0e0e0;
+      margin: 0;
+    }
+    h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0 0 20px 0;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+    h2 {
+      font-size: 11px;
+      font-weight: 600;
+      color: #666;
+      margin: 24px 0 8px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 500;
+      color: #888;
+      font-size: 12px;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 8px;
+      background: #252525;
+      color: #e0e0e0;
+      font-size: 13px;
+      transition: background 0.15s;
+    }
+    input[type="text"]:hover {
+      background: #2a2a2a;
+    }
+    input:focus {
+      outline: none;
+      background: #2d2d2d;
+      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
+    }
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 20px;
+      background: #252525;
+      padding: 4px;
+      border-radius: 10px;
+    }
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      color: #888;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .tab.active {
+      color: #fff;
+      background: #3a3a3a;
+    }
+    .tab:hover:not(.active) {
+      color: #ccc;
+      background: #2d2d2d;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .list-container {
+      max-height: 280px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+      border-radius: 10px;
+      background: #1c1c1c;
+    }
+    .list-item {
+      display: flex;
+      align-items: center;
+      padding: 10px 12px;
+      gap: 12px;
+      transition: background 0.1s;
+    }
+    .list-item:hover {
+      background: #252525;
+    }
+    .list-item input[type="checkbox"] {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      accent-color: #007aff;
+    }
+    .list-item .content {
+      flex: 1;
+      min-width: 0;
+    }
+    .list-item .selector {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #6cb6ff;
+    }
+    .list-item .css-value {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 11px;
+      color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    .list-item .editable {
+      cursor: pointer;
+      padding: 2px 6px;
+      margin: -2px -6px;
+      border-radius: 4px;
+      transition: background 0.1s;
+    }
+    .list-item .editable:hover {
+      background: #333;
+    }
+    .list-item .edit-input {
+      background: #252525;
+      border: none;
+      color: #e0e0e0;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      width: 100%;
+      margin: 0;
+      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.4);
+    }
+    .list-item .hotkey {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 12px;
+      color: #6cb6ff;
+    }
+    .list-item .description {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    .list-item .delete-btn {
+      background: none;
+      border: none;
+      color: #444;
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 14px;
+      border-radius: 4px;
+      transition: all 0.1s;
+      opacity: 0;
+    }
+    .list-item:hover .delete-btn {
+      opacity: 1;
+    }
+    .list-item .delete-btn:hover {
+      color: #ff6b6b;
+      background: rgba(255, 107, 107, 0.1);
+    }
+    .add-form {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .add-form input {
+      margin-bottom: 0;
+    }
+    .add-form .small {
+      width: 140px;
+      flex-shrink: 0;
+    }
+    button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button.primary {
+      background: #007aff;
+      color: white;
+    }
+    button.primary:hover {
+      background: #0066d6;
+    }
+    button.secondary {
+      background: #2a2a2a;
+      color: #e0e0e0;
+    }
+    button.secondary:hover {
+      background: #333;
+    }
+    .button-row {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 24px;
+      padding-top: 16px;
+    }
+    .shortcuts-info {
+      margin-top: 20px;
+      padding: 12px 14px;
+      background: #1c1c1c;
+      border-radius: 10px;
+      font-size: 12px;
+      color: #888;
+    }
+    .shortcuts-info kbd {
+      background: #2a2a2a;
+      padding: 3px 7px;
+      border-radius: 5px;
+      font-family: 'SF Mono', monospace;
+      font-size: 11px;
+    }
+    .shortcuts-info p {
+      margin: 6px 0;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1 id="app-title">Settings</h1>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="general">General</div>
+    <div class="tab" data-tab="css">CSS Overrides</div>
+    <div class="tab" data-tab="hotkeys">Blocked Hotkeys</div>
+  </div>
+
+  <!-- General Tab -->
+  <div id="general" class="tab-content active">
+    <label for="host">Remote Host URL</label>
+    <input type="text" id="host" placeholder="http://192.168.8.222">
+
+    <div class="shortcuts-info">
+      <p><kbd>Cmd</kbd> + <kbd>`</kbd> — Quit application (always works)</p>
+      <p><kbd>Cmd</kbd> + <kbd>,</kbd> — Open settings (always works)</p>
+      <p><kbd>Cmd</kbd> + <kbd>R</kbd> — Reload session</p>
+    </div>
+  </div>
+
+  <!-- CSS Tab -->
+  <div id="css" class="tab-content">
+    <p style="font-size: 12px; color: #888; margin-top: 0;">CSS rules injected into the remote session</p>
+    <div class="list-container" id="css-list"></div>
+    <div class="add-form">
+      <input type="text" id="new-selector" placeholder="Selector (e.g. .class, #id)" class="small">
+      <input type="text" id="new-css" placeholder="CSS (e.g. display: none !important)">
+      <button class="secondary" id="add-css">Add</button>
+    </div>
+  </div>
+
+  <!-- Hotkeys Tab -->
+  <div id="hotkeys" class="tab-content">
+    <p style="font-size: 12px; color: #888; margin-top: 0;">Hotkeys blocked from native handling (passed to remote session)</p>
+    <div class="list-container" id="hotkeys-list"></div>
+    <div class="add-form">
+      <input type="text" id="new-hotkey" placeholder="Key (e.g. w, Tab)" class="small">
+      <input type="text" id="new-description" placeholder="Description">
+      <button class="secondary" id="add-hotkey">Add</button>
+    </div>
+  </div>
+
+  <div class="button-row">
+    <button class="secondary" id="reload">Reload Session</button>
+    <button class="primary" id="save">Save & Close</button>
+  </div>
+
+  <script>
+    let config = {
+      host: '',
+      cssOverrides: [],
+      blockedHotkeys: []
+    };
+
+    // Tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(tab.dataset.tab).classList.add('active');
+      });
+    });
+
+    // Render CSS list
+    function renderCSSList() {
+      const container = document.getElementById('css-list');
+      container.innerHTML = config.cssOverrides.map((item, i) => `
+        <div class="list-item">
+          <input type="checkbox" ${item.enabled ? 'checked' : ''} data-index="${i}" class="css-toggle">
+          <div class="content">
+            <div class="selector editable" data-index="${i}" data-field="selector">${escapeHtml(item.selector)}</div>
+            <div class="css-value editable" data-index="${i}" data-field="css">${escapeHtml(item.css)}</div>
+          </div>
+          <button class="delete-btn" data-index="${i}" data-type="css">&times;</button>
+        </div>
+      `).join('');
+    }
+
+    // Render hotkeys list
+    function renderHotkeysList() {
+      const container = document.getElementById('hotkeys-list');
+      container.innerHTML = config.blockedHotkeys.map((item, i) => `
+        <div class="list-item">
+          <input type="checkbox" ${item.enabled ? 'checked' : ''} data-index="${i}" class="hotkey-toggle">
+          <div class="content">
+            <div class="hotkey">Cmd + ${escapeHtml(item.key)}</div>
+            <div class="description">${escapeHtml(item.description)}</div>
+          </div>
+          <button class="delete-btn" data-index="${i}" data-type="hotkey">&times;</button>
+        </div>
+      `).join('');
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Load settings
+    async function loadSettings() {
+      const appName = await window.kvmAPI.getAppName();
+      document.getElementById('app-title').textContent = `${appName} Settings`;
+      document.title = `${appName} Settings`;
+
+      config = await window.kvmAPI.getConfig();
+      document.getElementById('host').value = config.host || '';
+      renderCSSList();
+      renderHotkeysList();
+    }
+
+    // Event delegation for toggles and deletes
+    document.getElementById('css-list').addEventListener('change', (e) => {
+      if (e.target.classList.contains('css-toggle')) {
+        const index = parseInt(e.target.dataset.index);
+        config.cssOverrides[index].enabled = e.target.checked;
+      }
+    });
+
+    // Inline editing for CSS overrides
+    document.getElementById('css-list').addEventListener('click', (e) => {
+      const editable = e.target.closest('.editable');
+      if (!editable || editable.querySelector('input')) return;
+
+      const index = parseInt(editable.dataset.index);
+      const field = editable.dataset.field;
+      const currentValue = config.cssOverrides[index][field];
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'edit-input';
+      input.value = currentValue;
+
+      editable.textContent = '';
+      editable.appendChild(input);
+      input.focus();
+      input.select();
+
+      const save = () => {
+        const newValue = input.value.trim();
+        if (newValue) {
+          config.cssOverrides[index][field] = newValue;
+        }
+        renderCSSList();
+      };
+
+      input.addEventListener('blur', save);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          save();
+        } else if (e.key === 'Escape') {
+          renderCSSList();
+        }
+      });
+    });
+
+    document.getElementById('hotkeys-list').addEventListener('change', (e) => {
+      if (e.target.classList.contains('hotkey-toggle')) {
+        const index = parseInt(e.target.dataset.index);
+        config.blockedHotkeys[index].enabled = e.target.checked;
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (e.target.classList.contains('delete-btn')) {
+        const index = parseInt(e.target.dataset.index);
+        if (e.target.dataset.type === 'css') {
+          config.cssOverrides.splice(index, 1);
+          renderCSSList();
+        } else if (e.target.dataset.type === 'hotkey') {
+          config.blockedHotkeys.splice(index, 1);
+          renderHotkeysList();
+        }
+      }
+    });
+
+    // Add CSS
+    document.getElementById('add-css').addEventListener('click', () => {
+      const selector = document.getElementById('new-selector').value.trim();
+      const css = document.getElementById('new-css').value.trim();
+      if (selector && css) {
+        config.cssOverrides.push({ selector, css, enabled: true });
+        renderCSSList();
+        document.getElementById('new-selector').value = '';
+        document.getElementById('new-css').value = '';
+      }
+    });
+
+    // Add hotkey
+    document.getElementById('add-hotkey').addEventListener('click', () => {
+      const key = document.getElementById('new-hotkey').value.trim();
+      const description = document.getElementById('new-description').value.trim();
+      if (key) {
+        config.blockedHotkeys.push({ key, meta: true, description: description || key, enabled: true });
+        renderHotkeysList();
+        document.getElementById('new-hotkey').value = '';
+        document.getElementById('new-description').value = '';
+      }
+    });
+
+    // Save
+    document.getElementById('save').addEventListener('click', async () => {
+      config.host = document.getElementById('host').value;
+      await window.kvmAPI.saveConfig(config);
+      window.close();
+    });
+
+    // Reload
+    document.getElementById('reload').addEventListener('click', async () => {
+      await window.kvmAPI.reloadSession();
+    });
+
+    loadSettings();
+  </script>
+</body>
+</html>
