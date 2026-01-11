@@ -1,16 +1,16 @@
 {
-  "name": "kvmclient",
+  "name": "RC",
   "version": "1.0.0",
-  "description": "KVM Client - Remote Control client",
+  "description": "RC - Remote Control client",
   "main": "main.js",
-  "productName": "KVM Client",
+  "productName": "RC",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac"
   },
   "build": {
-    "appId": "com.kvmclient.app",
-    "productName": "KVM Client",
+    "appId": "com.rc.app",
+    "productName": "RC Client",
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
