@@ -10,89 +10,41 @@
       background: #161616;
       color: #e0e0e0;
       margin: 0;
-      padding: 16px 18px;
+      padding: 14px 16px;
       user-select: none;
       -webkit-user-select: none;
     }
-    h1 {
-      font-size: 14px;
-      font-weight: 600;
-      color: #fff;
-      margin: 0 0 2px 0;
-      letter-spacing: -0.2px;
+    h1 { font-size: 14px; font-weight: 600; color: #fff; margin: 0 0 2px 0; letter-spacing: -0.2px; }
+    #target { font-size: 11px; color: #777; margin: 0 0 10px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .section {
+      border: 1px solid #262626;
+      border-radius: 10px;
+      padding: 10px 12px 4px 12px;
+      margin-bottom: 12px;
     }
-    #target {
-      font-size: 11px;
-      color: #777;
-      margin: 0 0 12px 0;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .group {
-      font-size: 10px;
-      font-weight: 600;
-      color: #666;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 12px 0 8px 0;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 74px 1fr 58px;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 10px;
-    }
-    .label {
-      font-size: 12px;
-      color: #aaa;
-      white-space: nowrap;
-    }
+    .section.disabled { opacity: 0.45; pointer-events: none; }
+    .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+    .sec-title { font-size: 11px; font-weight: 700; color: #cfcfcf; text-transform: uppercase; letter-spacing: 0.5px; }
+    .sec-sub { font-size: 10px; color: #777; }
+    .row { display: grid; grid-template-columns: 70px 1fr 56px; align-items: center; gap: 10px; margin-bottom: 8px; }
+    .label { font-size: 12px; color: #aaa; white-space: nowrap; }
     .label.r { color: #ff6b6b; font-weight: 600; }
     .label.g { color: #7ee787; font-weight: 600; }
     .label.b { color: #6cb6ff; font-weight: 600; }
-    input[type="range"] {
-      width: 100%;
-      accent-color: #007aff;
-      cursor: pointer;
-    }
+    input[type="range"] { width: 100%; accent-color: #007aff; cursor: pointer; }
     input[type="number"] {
-      width: 100%;
-      padding: 5px 6px;
-      border: none;
-      border-radius: 6px;
-      background: #252525;
-      color: #e0e0e0;
-      font-size: 12px;
-      font-family: 'SF Mono', 'Monaco', monospace;
-      text-align: right;
+      width: 100%; padding: 5px 6px; border: none; border-radius: 6px;
+      background: #252525; color: #e0e0e0; font-size: 12px;
+      font-family: 'SF Mono', 'Monaco', monospace; text-align: right;
     }
-    input[type="number"]:focus {
-      outline: none;
-      background: #2d2d2d;
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.35);
-    }
-    .hint {
-      font-size: 10px;
-      color: #555;
-      margin: 8px 0 12px 0;
-      line-height: 1.4;
-    }
+    input[type="number"]:focus { outline: none; background: #2d2d2d; box-shadow: 0 0 0 2px rgba(0,122,255,0.35); }
+    .hint { font-size: 10px; color: #555; margin: 0 0 12px 0; line-height: 1.4; }
     .buttons { display: flex; flex-direction: column; gap: 8px; }
     .btn-row { display: flex; gap: 8px; }
     button {
-      flex: 1;
-      padding: 8px 10px;
-      border: none;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.12s;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      flex: 1; padding: 8px 10px; border: none; border-radius: 8px;
+      font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.12s;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     button.primary { background: #007aff; color: #fff; }
     button.primary:hover { background: #0066d6; }
@@ -101,163 +53,123 @@
     button:disabled { background: #222; color: #555; cursor: not-allowed; }
     #reset { flex: 0 0 auto; background: none; color: #888; padding: 8px 12px; }
     #reset:hover { color: #ccc; background: #222; }
-    #status {
-      height: 14px;
-      font-size: 11px;
-      color: #7ee787;
-      text-align: center;
-      margin-top: 8px;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-    #status.show { opacity: 1; }
+    #status { height: 14px; font-size: 11px; color: #666; text-align: center; margin-top: 10px; transition: color 0.15s; }
+    #status.saved { color: #7ee787; }
   </style>
 </head>
 <body>
   <h1>Video Adjustments</h1>
   <p id="target">Adjusting…</p>
 
-  <div id="rows"></div>
-
-  <p class="hint">Blue removes yellow · red vs green removes green cast · Tone tweaks the picture. Arrow keys nudge the boxes.</p>
-
-  <div class="buttons">
-    <div class="btn-row">
-      <button id="reset" class="secondary" title="Revert to the saved values">Reset</button>
-      <button id="save-this" class="secondary">Save to this server</button>
-    </div>
-    <button id="save-all" class="primary">Save to all servers</button>
+  <div class="section" id="sec-global">
+    <div class="sec-head"><span class="sec-title">Global</span><span class="sec-sub">applies to all servers</span></div>
+    <div class="rows" data-scope="global"></div>
   </div>
-  <div id="status"></div>
+
+  <div class="section" id="sec-server">
+    <div class="sec-head"><span class="sec-title">This server</span><span class="sec-sub" id="server-sub">only this tab</span></div>
+    <div class="rows" data-scope="server"></div>
+  </div>
+
+  <p class="hint">Global is the base for every server; the per-server layer stacks on top for the current tab only. 1.000 = no change (Sharpen 0 = off). Arrow keys nudge the boxes.</p>
+
+  <div id="status">Changes save automatically</div>
 
   <script>
-    // Adjustable parameters, grouped. `dec` = display decimals, `fine` = number-box step.
     const PARAMS = [
-      { key: 'r', label: 'Red',        group: 'White balance', cls: 'r', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.10 },
-      { key: 'g', label: 'Green',      group: 'White balance', cls: 'g', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.09 },
-      { key: 'b', label: 'Blue',       group: 'White balance', cls: 'b', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.22 },
-      { key: 'brightness', label: 'Brightness', group: 'Tone', cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, def: 1.00 },
-      { key: 'contrast',   label: 'Contrast',   group: 'Tone', cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, def: 1.00 },
-      { key: 'saturate',   label: 'Saturation', group: 'Tone', cls: '', min: 0.0, max: 2.0, step: 0.01, fine: 0.01, dec: 2, def: 1.00 }
+      { key: 'r', label: 'Red',        cls: 'r', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, neutral: 1 },
+      { key: 'g', label: 'Green',      cls: 'g', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, neutral: 1 },
+      { key: 'b', label: 'Blue',       cls: 'b', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, neutral: 1 },
+      { key: 'brightness', label: 'Brightness', cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, neutral: 1 },
+      { key: 'contrast',   label: 'Contrast',   cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, neutral: 1 },
+      { key: 'saturate',   label: 'Saturation', cls: '', min: 0.0, max: 2.0, step: 0.01, fine: 0.01, dec: 2, neutral: 1 },
+      { key: 'sharpen',    label: 'Sharpen',    cls: '', min: 0.0, max: 1.5, step: 0.02, fine: 0.02, dec: 2, neutral: 0 }
     ];
     const BY_KEY = Object.fromEntries(PARAMS.map(p => [p.key, p]));
     const keys = PARAMS.map(p => p.key);
-    const state = {};
+    const state = { global: {}, server: {} };
     let serverId = null, serverName = null;
 
-    // Build rows (with group headers)
-    (function build() {
-      let html = '', lastGroup = null;
-      PARAMS.forEach(p => {
-        if (p.group !== lastGroup) { html += `<div class="group">${p.group}</div>`; lastGroup = p.group; }
-        html += `
-          <div class="row">
-            <span class="label ${p.cls}">${p.label}</span>
-            <input type="range" id="${p.key}-range" min="${p.min}" max="${p.max}" step="${p.step}">
-            <input type="number" id="${p.key}-num" min="${p.min}" max="${p.max}" step="${p.fine}">
-          </div>`;
-      });
-      document.getElementById('rows').innerHTML = html;
-    })();
-
-    const els = {};
-    keys.forEach(k => {
-      els[k] = { range: document.getElementById(k + '-range'), num: document.getElementById(k + '-num') };
+    // Build the two sections' rows
+    ['global', 'server'].forEach(scope => {
+      const host = document.querySelector(`.rows[data-scope="${scope}"]`);
+      host.innerHTML = PARAMS.map(p => `
+        <div class="row">
+          <span class="label ${p.cls}">${p.label}</span>
+          <input type="range" id="${scope}-${p.key}-range" min="${p.min}" max="${p.max}" step="${p.step}">
+          <input type="number" id="${scope}-${p.key}-num" min="${p.min}" max="${p.max}" step="${p.fine}">
+        </div>`).join('');
     });
 
-    function clamp(p, v) {
-      v = parseFloat(v);
-      if (isNaN(v)) return p.def;
-      return Math.min(p.max, Math.max(p.min, v));
-    }
+    const el = (scope, key, kind) => document.getElementById(`${scope}-${key}-${kind}`);
 
-    // Live preview: throttle a bit while dragging so updates don't flood/queue,
-    // then flush immediately on "change" (fires the moment you release the slider
-    // or commit a number) so the final value lands in the window instantly.
+    function clamp(p, v) { v = parseFloat(v); if (isNaN(v)) return p.neutral; return Math.min(p.max, Math.max(p.min, v)); }
+
     let rafId = null;
-    function sendPreview() {
-      window.kvmAPI.previewVideoWB({ ...state });
-    }
-    function schedulePreview() {
-      // one update per animation frame → continuous & immediate on every move
-      if (rafId) return;
-      rafId = requestAnimationFrame(() => { rafId = null; sendPreview(); });
-    }
-    function flushPreview() {
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-      sendPreview();
+    function sendPreview() { window.kvmAPI.previewVideoWB({ global: state.global, server: state.server }); }
+    function schedulePreview() { if (rafId) return; rafId = requestAnimationFrame(() => { rafId = null; sendPreview(); }); }
+    function flushPreview() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; } sendPreview(); }
+
+    // Auto-save the layer that changed (no button). Called when a slider is
+    // released or a number committed.
+    function autosave(scope) {
+      if (scope === 'global') window.kvmAPI.saveVideoWB({ params: state.global, scope: 'all' });
+      else if (scope === 'server' && serverId) window.kvmAPI.saveVideoWB({ params: state.server, scope: serverId });
+      flash('Saved');
     }
 
-    function setParam(key, v, from, immediate) {
+    function setParam(scope, key, v, from, immediate) {
       const p = BY_KEY[key];
       v = clamp(p, v);
-      state[key] = v;
-      if (from !== 'range') els[key].range.value = v;
-      if (from !== 'num') els[key].num.value = v.toFixed(p.dec);
-      if (immediate) flushPreview(); else schedulePreview();
+      state[scope][key] = v;
+      if (from !== 'range') el(scope, key, 'range').value = v;
+      if (from !== 'num') el(scope, key, 'num').value = v.toFixed(p.dec);
+      if (immediate) { flushPreview(); autosave(scope); } else { schedulePreview(); }
     }
 
-    keys.forEach(k => {
-      // dragging / typing → throttled live preview
-      els[k].range.addEventListener('input', e => setParam(k, e.target.value, 'range', false));
-      els[k].num.addEventListener('input', e => setParam(k, e.target.value, 'num', false));
-      // release slider / commit number → apply the final value immediately
-      els[k].range.addEventListener('change', e => setParam(k, e.target.value, 'range', true));
-      els[k].num.addEventListener('change', e => setParam(k, e.target.value, 'num', true));
+    ['global', 'server'].forEach(scope => {
+      keys.forEach(key => {
+        el(scope, key, 'range').addEventListener('input', e => setParam(scope, key, e.target.value, 'range', false));
+        el(scope, key, 'range').addEventListener('change', e => setParam(scope, key, e.target.value, 'range', true));
+        el(scope, key, 'num').addEventListener('input', e => setParam(scope, key, e.target.value, 'num', false));
+        el(scope, key, 'num').addEventListener('change', e => setParam(scope, key, e.target.value, 'num', true));
+      });
     });
 
-    function applyValues(vals, doPreview) {
-      keys.forEach(k => {
-        const p = BY_KEY[k];
-        const v = vals[k] != null ? vals[k] : p.def;
-        state[k] = v;
-        els[k].range.value = v;
-        els[k].num.value = Number(v).toFixed(p.dec);
+    function applyValues(scope, vals) {
+      keys.forEach(key => {
+        const p = BY_KEY[key];
+        const v = vals && vals[key] != null ? vals[key] : p.neutral;
+        state[scope][key] = v;
+        el(scope, key, 'range').value = v;
+        el(scope, key, 'num').value = Number(v).toFixed(p.dec);
       });
-      if (doPreview) flushPreview();
     }
 
+    let statusTimer = null;
     function flash(msg) {
       const s = document.getElementById('status');
-      s.textContent = msg;
-      s.classList.add('show');
-      setTimeout(() => s.classList.remove('show'), 1600);
+      s.textContent = msg; s.classList.add('saved');
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(() => { s.classList.remove('saved'); s.textContent = 'Changes save automatically'; }, 1400);
     }
 
     async function load() {
       const wb = await window.kvmAPI.getVideoWB();
       serverId = wb.serverId;
       serverName = wb.serverName;
-      applyValues(wb, false);
+      applyValues('global', wb.global);
+      applyValues('server', wb.server);
 
-      document.getElementById('target').textContent =
-        serverName ? `Adjusting: ${serverName}` : 'No active video window';
-
-      const thisBtn = document.getElementById('save-this');
-      if (serverId) {
-        thisBtn.textContent = `Save to “${serverName}” only`;
-        thisBtn.disabled = false;
-      } else {
-        thisBtn.disabled = true;
-      }
+      document.getElementById('target').textContent = serverName ? `Adjusting: ${serverName}` : 'No active video window';
+      const secServer = document.getElementById('sec-server');
+      document.getElementById('server-sub').textContent = serverName ? `only “${serverName}”` : 'no active session';
+      if (serverId) secServer.classList.remove('disabled');
+      else secServer.classList.add('disabled');
     }
 
-    document.getElementById('save-all').addEventListener('click', async () => {
-      await window.kvmAPI.saveVideoWB({ ...state, scope: 'all' });
-      flash('Saved to all servers');
-    });
-
-    document.getElementById('save-this').addEventListener('click', async () => {
-      if (!serverId) return;
-      await window.kvmAPI.saveVideoWB({ ...state, scope: serverId });
-      flash(`Saved to ${serverName}`);
-    });
-
-    document.getElementById('reset').addEventListener('click', async () => {
-      const wb = await window.kvmAPI.getVideoWB();
-      applyValues(wb, true); // re-preview saved values, discarding unsaved changes
-      flash('Reverted to saved');
-    });
+    // Re-sync to whichever tab is active if it changes while the panel is open
+    if (window.kvmAPI.onVideoWBReload) window.kvmAPI.onVideoWBReload(load);
 
     load();
   </script>

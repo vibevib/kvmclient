@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('kvmAPI', {
   getVideoWB: () => ipcRenderer.invoke('get-video-wb'),
   previewVideoWB: (vals) => ipcRenderer.invoke('preview-video-wb', vals),
   saveVideoWB: (vals) => ipcRenderer.invoke('save-video-wb', vals),
+  onVideoWBReload: (cb) => ipcRenderer.on('wb-reload', () => cb()),
   reloadSession: () => ipcRenderer.invoke('reload-session'),
   getConnectionError: () => ipcRenderer.invoke('get-connection-error'),
   connect: (host) => ipcRenderer.invoke('connect', host),

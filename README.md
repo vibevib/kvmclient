@@ -2,88 +2,77 @@
 
 > **Warning:** This is fully vibecoded shitty code.
 
-A simple wrapper around [GL.iNet hardware KVM](https://www.gl-inet.com/) web UI aiming to improve the UX. It blocks host hotkeys (so that `Cmd+W` doesn't close your browser window on the host computer), hides excessive controls, and improves the contrast of the video stream.
+A macOS desktop wrapper around the [GL.iNet hardware KVM](https://www.gl-inet.com/) web UI, aiming to improve the UX. It blocks host hotkeys (so `Cmd+W` doesn't close the window while you're controlling the remote), hides excessive controls, corrects the video's color, and lets you juggle several KVMs at once.
 
 ## Features
 
-- Connect to remote KVM hosts over HTTP/HTTPS
-- Custom CSS injection for UI customization
-- Hotkey blocking to prevent accidental window actions
-- Auto-reconnect with connection error handling
-- Persistent settings
+- **Multiple servers** — save any number of KVM hosts and open them from the **Connections** menu, each in its own window.
+- **Splash / connection picker** — on launch it reopens the windows you had open; if none, a splash screen lists your saved servers to pick from (or connect to an ad-hoc URL).
+- **Session tabs** — turn any window into a multi-session window with an edge-docked button strip (**Tabs → Show Session Tabs**). Click a button to connect/switch to that server *in the same window*; each tab can **keep** streaming in the background or **suspend** to save bandwidth.
+- **Live video adjustments** — a floating panel (⌥⌘C) with **white balance** (per-channel R/G/B), **brightness / contrast / saturation**, and **sharpen**, in two layers: a **Global** layer for all servers and a **This server** layer for the current tab. Changes preview live and **save automatically**.
+- **CSS overrides** — inject arbitrary CSS into the remote UI, scoped **globally or per-server**, applied instantly.
+- **Hotkey blocking** — configurable list of macOS shortcuts that get passed through to the remote instead of acting on the host.
+- **Persistent settings** and auto-reconnect / connection-error handling.
 
 ## Getting Started
 
 ```bash
-# Install dependencies
 npm install
-
-# Run in development
-npm start
-
-# Build for macOS
-npm run build
+npm start          # run in development
+npm run build      # build an unsigned macOS .dmg
 ```
 
-The build outputs a `.dmg` installer to `dist/`.
+`npm run build` outputs to `dist/` (e.g. `dist/KVM-1.0.0-arm64.dmg` and `dist/mac-arm64/KVM.app`). The build is **unsigned**, so on first launch macOS Gatekeeper will warn — right-click the app → **Open** once, or **System Settings → Privacy & Security → Open Anyway**.
 
-## Building from Source
+To regenerate app icons after changing `assets/icon.png`:
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Generate app icons (if modifying `assets/icon.png`):
-   ```bash
-   node generate-icons.js
-   ```
-4. Build the app:
-   ```bash
-   npm run build
-   ```
-5. Find the installer at `dist/KVM-1.0.0.dmg`
+```bash
+node generate-icons.js
+```
+
+## Servers & Connections
+
+Add servers in **Settings → General** (name + host; a bare IP like `192.168.1.100` gets `http://` added automatically). Open them from the **Connections** menu — each click opens a new window/instance.
+
+## Session Tabs
+
+Configure the shared session strip in **Settings → Tabs**: pick the button **position** (left/right/top/bottom), whether it floats **over the content** (transparent, sits in the letterbox bars) or takes its **own space** (shrinks the video), its **size**, and the list of **session buttons** (a server + keep/suspend behavior).
+
+Then, on any window, **Tabs → Show Session Tabs** toggles the strip. Switching keeps every session view loaded and simply restacks them, so tabs swap instantly. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle sessions.
+
+## Video Adjustments
+
+Open with **View → Adjust Video Color…** (⌥⌘C). Two sections:
+
+- **Global** — applies to every server (the base look).
+- **This server** — applies only to the current tab; it stacks on top of the global layer (gains and tone multiply, sharpen adds). `1.000` = no change (`Sharpen 0` = off).
+
+White balance is a real per-channel gain (SVG `feComponentTransfer`), sharpen is an SVG `feConvolveMatrix` unsharp kernel — both applied to the detected video element. Every change previews live on the active tab and saves automatically (no Save button).
+
+## CSS Overrides
+
+Add/edit rules in **Settings → CSS Overrides**. Each rule has a selector, CSS, and an **Apply to** scope (all servers or one). Defaults hide clutter and correct the stream; changes apply live. The video adjustments above are stored as a special `#video-wrapper` rule.
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | `Cmd + ,` | Open settings |
+| `Cmd + R` | Reload the active session |
 | `Cmd + `` ` `` | Quit application |
-| `Cmd + R` | Reload session |
+| `Alt + Cmd + C` | Adjust video color |
+| `Alt + Cmd + I` | Toggle DevTools (for the active session) |
+| `Ctrl + Tab` / `Ctrl + Shift + Tab` | Next / previous session (tabbed window) |
 
 ## Blocked Hotkeys
 
-These macOS shortcuts are blocked by default to prevent accidental window actions while controlling the remote machine:
+These macOS shortcuts are passed through to the remote instead of acting on the host (editable in **Settings → Blocked Hotkeys**):
 
-| Shortcut | Default Action (Blocked) |
-|----------|--------------------------|
-| `Cmd + W` | Close tab |
-| `Cmd + Q` | Quit app |
-| `Cmd + T` | New tab |
-| `Cmd + N` | New window |
-| `Cmd + H` | Hide app |
-| `Cmd + M` | Minimize |
-| `Cmd + Tab` | App switcher |
-
-## CSS Overrides
-
-Default CSS rules adjust the video stream for better visibility:
-
-- **Video contrast/brightness** - `filter: contrast(1.1) brightness(1.2)` on `#stream-canvas`
-- **Hide video info overlay** - `.kvm-video-info`
-- **Hide collapse triangles** - `.un-collapse-triangle-collapsed`
-- **Full height layout** - `.kvm-page`
-
-All overrides are editable in Settings > CSS Overrides.
+`Cmd + W`, `Cmd + Q`, `Cmd + T`, `Cmd + N`, `Cmd + H`, `Cmd + M`, `Cmd + Tab`
 
 ## Configuration
 
 Settings are stored in `~/Library/Application Support/KVM/config.json`.
-
-## Customization
-
-To change the app name, edit `productName` in `package.json`. The name is automatically reflected in menus, window titles, and the UI.
 
 ## License
 

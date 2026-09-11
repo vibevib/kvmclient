@@ -1,7 +1,7 @@
 # KVM Architecture
 
 ## Overview
-KVM - macOS Electron app that displays remote browser session at 192.168.8.222, intercepts system hotkeys, and supports custom CSS injection.
+KVM - macOS Electron app that displays remote browser session at 192.168.1.100, intercepts system hotkeys, and supports custom CSS injection.
 
 ## Tech Stack
 - **Electron** (v28+)
@@ -16,7 +16,7 @@ KVM - macOS Electron app that displays remote browser session at 192.168.8.222, 
 - Block app quit except on cmd+`
 
 ### 2. BrowserView
-- Loads `http://192.168.8.222`
+- Loads `http://192.168.1.100`
 - Receives all keyboard events naturally
 - CSS injected via `webContents.insertCSS()` on `did-finish-load`
 
@@ -24,7 +24,7 @@ KVM - macOS Electron app that displays remote browser session at 192.168.8.222, 
 Location: `~/Library/Application Support/KVM/config.json` (macOS)
 ```json
 {
-  "host": "http://192.168.8.222",
+  "host": "http://192.168.1.100",
   "customCSS": ".un-collapse-triangle-collapsed{opacity:0.01 !important} ..."
 }
 ```

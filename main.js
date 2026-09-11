@@ -14,14 +14,21 @@ app.commandLine.appendSwitch('ignore-certificate-errors');
 app.commandLine.appendSwitch('allow-insecure-localhost');
 app.commandLine.appendSwitch('disable-features', 'AutoupgradeMixedContent');
 
-// Default video adjustment: per-channel white-balance gains (r/g/b) + tone.
-const VIDEO_WB_DEFAULT = { r: 1.10, g: 1.09, b: 1.22, brightness: 1, contrast: 1, saturate: 1 };
+// Default video adjustment: per-channel white-balance gains (r/g/b) + tone + sharpen.
+const VIDEO_WB_DEFAULT = { r: 1.10, g: 1.09, b: 1.22, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
 
 // The filter VALUE for a parameter set: an inline SVG feComponentTransfer does the
 // per-channel white balance (CSS filter functions can't), chained with the CSS
-// brightness/contrast/saturate tone controls.
+// brightness/contrast/saturate tone controls, plus an optional SVG sharpen
+// (feConvolveMatrix — a 3×3 unsharp kernel; strength k, 0 = off).
 function wbFilterValue(p) {
-  return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><filter id="wb" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="linear" slope="${p.r}"/><feFuncG type="linear" slope="${p.g}"/><feFuncB type="linear" slope="${p.b}"/></feComponentTransfer></filter></svg>#wb') brightness(${p.brightness}) contrast(${p.contrast}) saturate(${p.saturate})`;
+  let v = `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><filter id="wb" color-interpolation-filters="sRGB"><feComponentTransfer><feFuncR type="linear" slope="${p.r}"/><feFuncG type="linear" slope="${p.g}"/><feFuncB type="linear" slope="${p.b}"/></feComponentTransfer></filter></svg>#wb') brightness(${p.brightness}) contrast(${p.contrast}) saturate(${p.saturate})`;
+  const k = Number(p.sharpen) || 0;
+  if (k > 0) {
+    const nk = -k, c = 1 + 4 * k;
+    v += ` url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"><filter id="sh" color-interpolation-filters="sRGB"><feConvolveMatrix order="3" preserveAlpha="true" divisor="1" kernelMatrix="0 ${nk} 0 ${nk} ${c} ${nk} 0 ${nk} 0"/></filter></svg>#sh')`;
+  }
+  return v;
 }
 
 function wbFilterCss(p) {
@@ -35,7 +42,7 @@ const store = new Store({
   name: 'config',
   defaults: {
     servers: [
-      { id: 'default', name: 'Default', host: 'http://192.168.8.222' }
+      { id: 'default', name: 'Default', host: 'http://192.168.1.100' }
     ],
     cssOverrides: [
       { selector: '.un-collapse-triangle-collapsed', css: 'opacity: 0.01 !important', enabled: true, scope: 'all' },
@@ -72,7 +79,7 @@ const store = new Store({
   if (!Array.isArray(servers) || servers.length === 0) {
     const legacyHost = store.get('host');
     store.set('servers', [
-      { id: 'default', name: 'Default', host: legacyHost || 'http://192.168.8.222' }
+      { id: 'default', name: 'Default', host: legacyHost || 'http://192.168.1.100' }
     ]);
   }
 })();
@@ -123,27 +130,59 @@ function wbParamsFromCss(css) {
     const m = css.match(new RegExp(name + '\\(([0-9.]+)\\)'));
     return m ? parseFloat(m[1]) : 1;
   };
+  // Sharpen strength k from the convolve kernel's centre value (1 + 4k).
+  let sharpen = 0;
+  const km = css.match(/kernelMatrix="([^"]+)"/);
+  if (km) {
+    const nums = km[1].trim().split(/\s+/).map(Number);
+    if (nums.length >= 5 && isFinite(nums[4])) sharpen = Math.max(0, (nums[4] - 1) / 4);
+  }
   return {
     r: slopes[0] != null ? slopes[0] : 1,
     g: slopes[1] != null ? slopes[1] : 1,
     b: slopes[2] != null ? slopes[2] : 1,
     brightness: fn('brightness'),
     contrast: fn('contrast'),
-    saturate: fn('saturate')
+    saturate: fn('saturate'),
+    sharpen
   };
 }
 
-// Effective video params for a server: a server-scoped #video-wrapper overrides
-// the global one; falls back to the defaults when there's no override.
-function effectiveWB(serverId) {
+// Identity params (no correction) — the default for a server's own layer.
+const WB_IDENTITY = { r: 1, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
+
+// The GLOBAL video layer (applies to every server); defaults to the tuned base.
+function globalWB() {
   const overrides = store.get('cssOverrides') || [];
-  const scoped = overrides.find(o => o.selector === '#video-wrapper' && o.scope === serverId);
-  const global = overrides.find(o => o.selector === '#video-wrapper' && (o.scope || 'all') === 'all');
-  const src = scoped || global;
-  return src ? wbParamsFromCss(src.css) : { ...VIDEO_WB_DEFAULT };
+  const g = overrides.find(o => o.selector === '#video-wrapper' && (o.scope || 'all') === 'all');
+  return g ? wbParamsFromCss(g.css) : { ...VIDEO_WB_DEFAULT };
 }
 
-// Ensure a host string has a scheme (accepts a bare IP like "192.168.8.222")
+// A server's OWN video layer (applies only to that server); identity if unset.
+function serverWB(serverId) {
+  if (!serverId) return { ...WB_IDENTITY };
+  const overrides = store.get('cssOverrides') || [];
+  const s = overrides.find(o => o.selector === '#video-wrapper' && o.scope === serverId);
+  return s ? wbParamsFromCss(s.css) : { ...WB_IDENTITY };
+}
+
+// Compose two layers: gains and tone multiply, so a server layer tweaks the global.
+function combineWB(a, b) {
+  return {
+    r: a.r * b.r, g: a.g * b.g, b: a.b * b.b,
+    brightness: a.brightness * b.brightness,
+    contrast: a.contrast * b.contrast,
+    saturate: a.saturate * b.saturate,
+    sharpen: (Number(a.sharpen) || 0) + (Number(b.sharpen) || 0) // sharpen adds
+  };
+}
+
+// Effective params for a server = global layer × that server's own layer.
+function effectiveWB(serverId) {
+  return combineWB(globalWB(), serverWB(serverId));
+}
+
+// Ensure a host string has a scheme (accepts a bare IP like "192.168.1.100")
 function normalizeHost(host) {
   const h = (host || '').trim();
   if (!h) return '';
@@ -402,6 +441,8 @@ function activateServerInWin(win, serverId) {
   pushWinTabsState(win);
   createMenu();
   persistOpenSessions();
+  // If the color panel is open, re-sync it to the now-active tab/server.
+  if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
 }
 
 // Show/hide the tab strip on a window, live, without recreating the window.
@@ -624,8 +665,8 @@ function openColorAdjust() {
   }
 
   colorWindow = new BrowserWindow({
-    width: 400,
-    height: 560,
+    width: 430,
+    height: 720,
     title: 'Video Color',
     show: false,
     resizable: false,
@@ -651,7 +692,7 @@ function openColorAdjust() {
   // Place it over the target window's top-right corner so it's obvious
   if (target && !target.win.isDestroyed()) {
     const b = target.win.getBounds();
-    colorWindow.setPosition(Math.round(b.x + b.width - 424), Math.round(b.y + 48));
+    colorWindow.setPosition(Math.round(b.x + b.width - 454), Math.round(b.y + 48));
   }
 
   colorWindow.loadFile('color.html');
@@ -660,10 +701,9 @@ function openColorAdjust() {
     colorWindow.focus();
   });
   colorWindow.on('closed', () => {
-    // Drop any un-saved live preview so the video reverts to its saved look
-    const rec = colorTargetInstanceId ? windows.get(colorTargetInstanceId) : null;
-    applyVideoFilter(rec);
     colorWindow = null;
+    // Drop any un-saved live preview so every video reverts to its saved look
+    applyVideoFilterAll();
   });
 }
 
@@ -904,37 +944,43 @@ ipcMain.handle('connect', (event, host) => {
 
 // ---- Video color IPC --------------------------------------------------------
 
-// Current gains + which server the panel is adjusting.
+// Both layers (global + this server) + which server the panel is adjusting.
 ipcMain.handle('get-video-wb', () => {
-  const rec = colorTargetInstanceId ? windows.get(colorTargetInstanceId) : null;
+  const rec = getActiveServerRec(); // the tab currently in front
   const serverId = rec ? rec.serverId : null;
-  const serverName = rec ? (rec.server.name || rec.server.host) : null;
-  return { ...effectiveWB(serverId), serverId, serverName };
+  const serverName = rec && rec.server ? (rec.server.name || rec.server.host) : null;
+  return { global: globalWB(), server: serverWB(serverId), serverId, serverName };
 });
 
-// Live preview on the target window (not persisted).
+// Live preview of the COMBINED (global × server) look on the CURRENT active tab.
 ipcMain.handle('preview-video-wb', (event, vals) => {
-  const rec = colorTargetInstanceId ? windows.get(colorTargetInstanceId) : null;
+  const rec = getActiveServerRec();
   if (!rec) return false;
-  previewVideoFilter(rec, wbFilterValue(vals));
+  const combined = combineWB(vals.global || WB_IDENTITY, vals.server || WB_IDENTITY);
+  previewVideoFilter(rec, wbFilterValue(combined));
   return true;
 });
 
-// Persist the gains. scope 'all' updates the global #video-wrapper override;
-// a server id creates/updates a server-scoped override that wins for that server.
+// Persist one layer. scope 'all' → the global #video-wrapper override; a server id
+// → that server's own override (removed when it's identity, to stay clean).
 ipcMain.handle('save-video-wb', (event, vals) => {
   const scope = vals.scope || 'all';
+  const params = vals.params || vals; // {r,g,b,brightness,contrast,saturate}
   const overrides = store.get('cssOverrides') || [];
-  const css = wbFilterCss(vals);
-  const entry = overrides.find(o => o.selector === '#video-wrapper' && (o.scope || 'all') === scope);
-  if (entry) {
-    entry.css = css;
-    entry.enabled = true;
+  const idx = overrides.findIndex(o => o.selector === '#video-wrapper' && (o.scope || 'all') === scope);
+
+  const isIdentity = ['r', 'g', 'b', 'brightness', 'contrast', 'saturate'].every(k => Number(params[k]) === 1)
+    && (Number(params.sharpen) || 0) === 0;
+  if (scope !== 'all' && isIdentity) {
+    if (idx >= 0) overrides.splice(idx, 1); // drop an all-neutral per-server layer
   } else {
-    overrides.push({ selector: '#video-wrapper', css, enabled: true, scope });
+    const css = wbFilterCss(params);
+    if (idx >= 0) { overrides[idx].css = css; overrides[idx].enabled = true; }
+    else overrides.push({ selector: '#video-wrapper', css, enabled: true, scope });
   }
+
   store.set('cssOverrides', overrides);
-  applyVideoFilterAll(); // re-apply the saved video filter to every open window
+  applyVideoFilterAll(); // re-apply the combined filter to every open window
   return true;
 });
 
