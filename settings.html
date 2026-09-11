@@ -115,17 +115,75 @@
     }
     .list-item .selector {
       font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 12px;
+      font-size: 13px;
       color: #6cb6ff;
-    }
-    .list-item .css-value {
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 11px;
-      color: #666;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      margin-top: 2px;
+      min-width: 0;
+    }
+    .list-item .css-value {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+      color: #c3e88d;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    /* CSS rows: selector + properties + per-server scope as aligned columns */
+    .list-item.css-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr) 112px auto;
+      align-items: center;
+      column-gap: 10px;
+    }
+    .scope-select {
+      width: 100%;
+      background: #252525;
+      color: #9a9a9a;
+      border: none;
+      border-radius: 6px;
+      font-size: 11px;
+      padding: 5px 4px;
+      cursor: pointer;
+    }
+    .scope-select:hover {
+      background: #2d2d2d;
+      color: #ccc;
+    }
+    .scope-select:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
+    }
+    /* Tabs settings */
+    .check-row { display: flex; align-items: center; gap: 8px; color: #ccc; font-size: 13px; margin-bottom: 12px; }
+    .check-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #007aff; }
+    .tabs-opts { display: flex; gap: 16px; margin-bottom: 8px; flex-wrap: wrap; align-items: flex-start; }
+    .field-select {
+      padding: 9px 10px; border: none; border-radius: 8px; background: #252525; color: #e0e0e0; font-size: 13px; cursor: pointer;
+    }
+    .field-select:hover { background: #2a2a2a; }
+    .list-item.tab-item-row {
+      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px;
+    }
+    .tab-item-row select {
+      width: 100%; padding: 8px 10px; border: none; border-radius: 8px; background: #252525; color: #e0e0e0; font-size: 13px; cursor: pointer;
+    }
+    .tab-item-row select:hover { background: #2a2a2a; }
+    .tab-item-row .tab-url {
+      grid-column: 1 / -1;
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
+      font-size: 11px; color: #c3e88d;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      padding-left: 2px;
+    }
+    /* Server rows: name + host as aligned columns */
+    .list-item.server-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
+      align-items: center;
+      column-gap: 12px;
     }
     .list-item .editable {
       cursor: pointer;
@@ -245,14 +303,20 @@
 
   <div class="tabs">
     <div class="tab active" data-tab="general">General</div>
+    <div class="tab" data-tab="tabsview">Tabs</div>
     <div class="tab" data-tab="css">CSS Overrides</div>
     <div class="tab" data-tab="hotkeys">Blocked Hotkeys</div>
   </div>
 
   <!-- General Tab -->
   <div id="general" class="tab-content active">
-    <label for="host">Remote Host URL</label>
-    <input type="text" id="host" placeholder="http://192.168.8.222">
+    <p style="font-size: 12px; color: #888; margin-top: 0;">Servers — open any of these from the <strong style="color:#aaa;">Session</strong> menu (each in its own window)</p>
+    <div class="list-container" id="servers-list"></div>
+    <div class="add-form">
+      <input type="text" id="new-server-name" placeholder="Name (e.g. Office KVM)" class="small">
+      <input type="text" id="new-server-host" placeholder="192.168.8.222 or http://…">
+      <button class="secondary" id="add-server">Add</button>
+    </div>
 
     <div class="shortcuts-info">
       <p><kbd>Cmd</kbd> + <kbd>`</kbd> — Quit application (always works)</p>
@@ -283,6 +347,45 @@
     </div>
   </div>
 
+  <!-- Tabs Tab -->
+  <div id="tabsview" class="tab-content">
+    <p style="font-size: 12px; color: #888; margin-top: 0;">Show a session-switcher strip on <strong style="color:#aaa;">any</strong> window (menu: <strong style="color:#aaa;">Tabs → Show Session Tabs</strong>, or the button below). Clicking a button connects that server, or switches to it — in the same window.</p>
+
+    <div class="tabs-opts">
+      <div>
+        <label for="tabs-position">Strip position</label>
+        <select id="tabs-position" class="field-select">
+          <option value="right">Right edge</option>
+          <option value="left">Left edge</option>
+          <option value="top">Top edge</option>
+          <option value="bottom">Bottom edge</option>
+        </select>
+      </div>
+      <div>
+        <label for="tabs-overlay">Strip area</label>
+        <select id="tabs-overlay" class="field-select">
+          <option value="over">Over the content</option>
+          <option value="own">Own space (shrinks video)</option>
+        </select>
+      </div>
+      <div>
+        <label for="tabs-size">Strip size (px)</label>
+        <input type="number" id="tabs-size" min="40" max="240" step="2" style="width: 90px;">
+      </div>
+    </div>
+
+    <h2 style="margin-top: 20px;">Session buttons</h2>
+    <div class="list-container" id="tab-items-list"></div>
+    <div class="add-form">
+      <button class="secondary" id="add-tab-item">Add session button</button>
+    </div>
+
+    <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px;">
+      <button class="primary" id="show-tabs-here">Show tabs on the active window</button>
+      <span style="font-size: 11px; color: #777;">Changes apply live to open strips.</span>
+    </div>
+  </div>
+
   <div class="button-row">
     <button class="secondary" id="reload">Reload Session</button>
     <button class="primary" id="save">Save & Close</button>
@@ -290,9 +393,10 @@
 
   <script>
     let config = {
-      host: '',
+      servers: [],
       cssOverrides: [],
-      blockedHotkeys: []
+      blockedHotkeys: [],
+      tabs: { enabled: false, position: 'right', overlay: true, showButtons: true, size: 76, items: [] }
     };
 
     // Tab switching
@@ -302,22 +406,46 @@
         document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
         tab.classList.add('active');
         document.getElementById(tab.dataset.tab).classList.add('active');
+        if (tab.dataset.tab === 'tabsview') renderTabItems(); // refresh server dropdowns
       });
     });
+
+    // Render servers list
+    function renderServersList() {
+      const container = document.getElementById('servers-list');
+      if (!config.servers || config.servers.length === 0) {
+        container.innerHTML = '<div style="padding: 14px; color: #666; font-size: 12px;">No servers yet — add one below.</div>';
+        return;
+      }
+      container.innerHTML = config.servers.map((item, i) => `
+        <div class="list-item server-item">
+          <div class="selector editable" data-index="${i}" data-field="name">${escapeHtml(item.name || '')}</div>
+          <div class="css-value editable" data-index="${i}" data-field="host">${escapeHtml(item.host || '')}</div>
+          <button class="delete-btn" data-index="${i}" data-type="server">&times;</button>
+        </div>
+      `).join('');
+    }
 
     // Render CSS list
     function renderCSSList() {
       const container = document.getElementById('css-list');
-      container.innerHTML = config.cssOverrides.map((item, i) => `
-        <div class="list-item">
+      const servers = config.servers || [];
+      container.innerHTML = config.cssOverrides.map((item, i) => {
+        const scope = item.scope || 'all';
+        const options = ['<option value="all"' + (scope === 'all' ? ' selected' : '') + '>All servers</option>']
+          .concat(servers.map(s =>
+            `<option value="${escapeHtml(s.id)}"${scope === s.id ? ' selected' : ''}>${escapeHtml(s.name || s.host)}</option>`
+          )).join('');
+        return `
+        <div class="list-item css-item">
           <input type="checkbox" ${item.enabled ? 'checked' : ''} data-index="${i}" class="css-toggle">
-          <div class="content">
-            <div class="selector editable" data-index="${i}" data-field="selector">${escapeHtml(item.selector)}</div>
-            <div class="css-value editable" data-index="${i}" data-field="css">${escapeHtml(item.css)}</div>
-          </div>
+          <div class="selector editable" data-index="${i}" data-field="selector">${escapeHtml(item.selector)}</div>
+          <div class="css-value editable" data-index="${i}" data-field="css">${escapeHtml(item.css)}</div>
+          <select class="scope-select" data-index="${i}" title="Apply this line to">${options}</select>
           <button class="delete-btn" data-index="${i}" data-type="css">&times;</button>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
     // Render hotkeys list
@@ -335,8 +463,58 @@
       `).join('');
     }
 
+    // Resolve the URL a session button will actually load (bare IPs get http://)
+    function normalizeHost(h) {
+      h = (h || '').trim();
+      if (!h) return '';
+      return /^https?:\/\//i.test(h) ? h : 'http://' + h;
+    }
+    function serverHost(id) {
+      const s = (config.servers || []).find(x => x.id === id);
+      return s ? normalizeHost(s.host) : '';
+    }
+
+    // Render the tabbed-window session buttons
+    function renderTabItems() {
+      const container = document.getElementById('tab-items-list');
+      const items = (config.tabs && config.tabs.items) || [];
+      const servers = config.servers || [];
+      if (!items.length) {
+        container.innerHTML = '<div style="padding:14px;color:#666;font-size:12px;">No session buttons yet — add one below.</div>';
+        return;
+      }
+      container.innerHTML = items.map((it, i) => {
+        const serverOpts = servers.length
+          ? servers.map(s => `<option value="${escapeHtml(s.id)}" ${it.serverId === s.id ? 'selected' : ''}>${escapeHtml(s.name || s.host)}</option>`).join('')
+          : '<option value="">(add a server first)</option>';
+        return `
+          <div class="list-item tab-item-row">
+            <select class="tab-server" data-index="${i}" title="Server">${serverOpts}</select>
+            <select class="tab-behavior" data-index="${i}" title="When hidden">
+              <option value="keep" ${it.behavior !== 'suspend' ? 'selected' : ''}>Keep connected</option>
+              <option value="suspend" ${it.behavior === 'suspend' ? 'selected' : ''}>Suspend (save bandwidth)</option>
+            </select>
+            <button class="delete-btn" data-index="${i}" data-type="tab-item">&times;</button>
+            <div class="tab-url" title="URL this session will load">${escapeHtml(serverHost(it.serverId))}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function populateTabsControls() {
+      if (!config.tabs) config.tabs = { enabled: false, position: 'right', showButtons: true, size: 76, items: [] };
+      document.getElementById('tabs-position').value = config.tabs.position || 'right';
+      document.getElementById('tabs-overlay').value = config.tabs.overlay === false ? 'own' : 'over';
+      document.getElementById('tabs-size').value = config.tabs.size || 76;
+      renderTabItems();
+    }
+
     function escapeHtml(str) {
       return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Push current CSS overrides to the live session so changes apply immediately.
+    function applyCSSLive() {
+      window.kvmAPI.updateCSS(config.cssOverrides);
     }
 
     // Load settings
@@ -346,9 +524,10 @@
       document.title = `${appName} Settings`;
 
       config = await window.kvmAPI.getConfig();
-      document.getElementById('host').value = config.host || '';
+      renderServersList();
       renderCSSList();
       renderHotkeysList();
+      populateTabsControls();
     }
 
     // Event delegation for toggles and deletes
@@ -356,46 +535,57 @@
       if (e.target.classList.contains('css-toggle')) {
         const index = parseInt(e.target.dataset.index);
         config.cssOverrides[index].enabled = e.target.checked;
+        applyCSSLive();
+      } else if (e.target.classList.contains('scope-select')) {
+        const index = parseInt(e.target.dataset.index);
+        config.cssOverrides[index].scope = e.target.value;
+        applyCSSLive();
       }
     });
 
-    // Inline editing for CSS overrides
-    document.getElementById('css-list').addEventListener('click', (e) => {
-      const editable = e.target.closest('.editable');
-      if (!editable || editable.querySelector('input')) return;
+    // Inline editing, shared by the servers + CSS lists (click a value to edit it)
+    function attachInlineEdit(containerId, getArray, render, onCommit) {
+      document.getElementById(containerId).addEventListener('click', (e) => {
+        const editable = e.target.closest('.editable');
+        if (!editable || editable.querySelector('input')) return;
 
-      const index = parseInt(editable.dataset.index);
-      const field = editable.dataset.field;
-      const currentValue = config.cssOverrides[index][field];
+        const index = parseInt(editable.dataset.index);
+        const field = editable.dataset.field;
+        const arr = getArray();
 
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.className = 'edit-input';
-      input.value = currentValue;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'edit-input';
+        input.value = arr[index][field] || '';
 
-      editable.textContent = '';
-      editable.appendChild(input);
-      input.focus();
-      input.select();
+        editable.textContent = '';
+        editable.appendChild(input);
+        input.focus();
+        input.select();
 
-      const save = () => {
-        const newValue = input.value.trim();
-        if (newValue) {
-          config.cssOverrides[index][field] = newValue;
-        }
-        renderCSSList();
-      };
+        const save = () => {
+          const newValue = input.value.trim();
+          if (newValue) {
+            arr[index][field] = newValue;
+            if (onCommit) onCommit();
+          }
+          render();
+        };
 
-      input.addEventListener('blur', save);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          save();
-        } else if (e.key === 'Escape') {
-          renderCSSList();
-        }
+        input.addEventListener('blur', save);
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            ev.preventDefault();
+            save();
+          } else if (ev.key === 'Escape') {
+            render();
+          }
+        });
       });
-    });
+    }
+
+    attachInlineEdit('servers-list', () => config.servers, renderServersList, renderCSSList);
+    attachInlineEdit('css-list', () => config.cssOverrides, renderCSSList, applyCSSLive);
 
     document.getElementById('hotkeys-list').addEventListener('change', (e) => {
       if (e.target.classList.contains('hotkey-toggle')) {
@@ -404,16 +594,88 @@
       }
     });
 
+    // Tabs settings controls — persist + apply live to an open tabbed window
+    let tabsDirty = false;
+    function applyTabsLive() {
+      tabsDirty = true;
+      if (window.kvmAPI.updateTabs) window.kvmAPI.updateTabs(config.tabs);
+    }
+
+    document.getElementById('tabs-position').addEventListener('change', e => { config.tabs.position = e.target.value; applyTabsLive(); });
+    document.getElementById('tabs-overlay').addEventListener('change', e => { config.tabs.overlay = e.target.value === 'over'; applyTabsLive(); });
+    function commitSize(e) {
+      const v = parseInt(e.target.value);
+      if (v >= 40 && v <= 240) config.tabs.size = v; // ignore partial/out-of-range while typing
+      applyTabsLive();
+    }
+    document.getElementById('tabs-size').addEventListener('input', commitSize);
+    document.getElementById('tabs-size').addEventListener('change', commitSize);
+
+    document.getElementById('tab-items-list').addEventListener('change', (e) => {
+      const i = parseInt(e.target.dataset.index);
+      if (e.target.classList.contains('tab-server')) {
+        config.tabs.items[i].serverId = e.target.value;
+        const row = e.target.closest('.tab-item-row');
+        const urlEl = row && row.querySelector('.tab-url');
+        if (urlEl) urlEl.textContent = serverHost(e.target.value);
+      } else if (e.target.classList.contains('tab-behavior')) {
+        config.tabs.items[i].behavior = e.target.value;
+      }
+      applyTabsLive();
+    });
+
+    document.getElementById('add-tab-item').addEventListener('click', () => {
+      const first = (config.servers[0] && config.servers[0].id) || '';
+      config.tabs.items.push({ serverId: first, behavior: 'keep' });
+      renderTabItems();
+      applyTabsLive();
+    });
+
+    // Save config and show the tab strip on the active session window
+    document.getElementById('show-tabs-here').addEventListener('click', async () => {
+      await window.kvmAPI.saveConfig(config);
+      await window.kvmAPI.showTabsHere();
+    });
+
     document.addEventListener('click', (e) => {
       if (e.target.classList.contains('delete-btn')) {
         const index = parseInt(e.target.dataset.index);
         if (e.target.dataset.type === 'css') {
           config.cssOverrides.splice(index, 1);
           renderCSSList();
+          applyCSSLive();
         } else if (e.target.dataset.type === 'hotkey') {
           config.blockedHotkeys.splice(index, 1);
           renderHotkeysList();
+        } else if (e.target.dataset.type === 'server') {
+          const removed = config.servers[index];
+          config.servers.splice(index, 1);
+          // CSS lines scoped to the removed server fall back to "All servers"
+          if (removed) {
+            config.cssOverrides.forEach(o => { if (o.scope === removed.id) o.scope = 'all'; });
+          }
+          renderServersList();
+          renderCSSList();
+          renderTabItems();
+        } else if (e.target.dataset.type === 'tab-item') {
+          config.tabs.items.splice(index, 1);
+          renderTabItems();
+          applyTabsLive();
         }
+      }
+    });
+
+    // Add server
+    document.getElementById('add-server').addEventListener('click', () => {
+      const name = document.getElementById('new-server-name').value.trim();
+      const host = document.getElementById('new-server-host').value.trim();
+      if (name && host) {
+        const id = 's' + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
+        config.servers.push({ id, name, host });
+        renderServersList();
+        renderCSSList(); // refresh scope dropdowns with the new server
+        document.getElementById('new-server-name').value = '';
+        document.getElementById('new-server-host').value = '';
       }
     });
 
@@ -424,6 +686,7 @@
       if (selector && css) {
         config.cssOverrides.push({ selector, css, enabled: true });
         renderCSSList();
+        applyCSSLive();
         document.getElementById('new-selector').value = '';
         document.getElementById('new-css').value = '';
       }
@@ -443,7 +706,6 @@
 
     // Save
     document.getElementById('save').addEventListener('click', async () => {
-      config.host = document.getElementById('host').value;
       await window.kvmAPI.saveConfig(config);
       window.close();
     });

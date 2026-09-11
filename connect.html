@@ -93,6 +93,8 @@
       color: #555;
       font-size: 12px;
     }
+    .hint a { color: #6cb6ff; text-decoration: none; cursor: pointer; }
+    .hint a:hover { text-decoration: underline; }
     kbd {
       background: #2a2a2a;
       padding: 3px 7px;
@@ -100,24 +102,86 @@
       font-family: 'SF Mono', monospace;
       font-size: 11px;
     }
+    .server-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 14px;
+      text-align: left;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    .server-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      background: #1f1f1f;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .server-item:hover { background: #262626; }
+    .server-item input[type="checkbox"] {
+      width: 16px; height: 16px; accent-color: #007aff; flex-shrink: 0; cursor: pointer;
+    }
+    .server-item .info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .server-item .name { font-size: 13px; color: #e0e0e0; font-weight: 500; }
+    .server-item .host {
+      font-size: 11px; color: #666; font-family: 'SF Mono', monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .primary-btn {
+      width: 100%; padding: 12px; background: #007aff; color: #fff;
+      border: none; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .primary-btn:hover { background: #0066d6; }
+    .primary-btn:disabled { background: #2a2a2a; color: #666; cursor: not-allowed; }
+    .divider {
+      display: flex; align-items: center; text-align: center;
+      color: #555; font-size: 12px; margin: 18px 0;
+    }
+    .divider::before, .divider::after {
+      content: ''; flex: 1; height: 1px; background: #2a2a2a;
+    }
+    .divider span { padding: 0 12px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1 id="app-title">Remote Connection</h1>
     <p class="error-message" id="error"></p>
-    <p class="subtitle">Enter the URL of your remote host</p>
+
+    <div id="servers-section">
+      <p class="subtitle">Select one or more servers to open</p>
+      <div class="server-list" id="server-list"></div>
+      <button id="open-selected" class="primary-btn" disabled>Open Selected</button>
+    </div>
+
+    <p class="subtitle" id="empty-note" style="display:none;">No servers yet — add one, or connect manually below.</p>
+
+    <div class="divider" id="divider"><span>or connect manually</span></div>
+
     <div class="input-group">
       <input type="text" id="host" placeholder="http://192.168.1.100">
       <button id="connect">Connect</button>
     </div>
-    <p class="hint"><kbd>Cmd</kbd> + <kbd>,</kbd> to open settings</p>
+    <p class="hint"><a href="#" id="open-settings-link">＋ Add or manage servers</a></p>
   </div>
 
   <script>
     const hostInput = document.getElementById('host');
     const connectBtn = document.getElementById('connect');
     const errorEl = document.getElementById('error');
+    const serverListEl = document.getElementById('server-list');
+    const serversSection = document.getElementById('servers-section');
+    const dividerEl = document.getElementById('divider');
+    const openSelectedBtn = document.getElementById('open-selected');
+
+    function escapeHtml(str) {
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
 
     // Load app name
     window.kvmAPI.getAppName().then(appName => {
@@ -125,9 +189,45 @@
       document.title = appName;
     });
 
-    // Load current host
+    // Load configured servers + the current host
     window.kvmAPI.getConfig().then(config => {
       hostInput.value = config.host || '';
+      const servers = config.servers || [];
+      if (!servers.length) {
+        serversSection.style.display = 'none';
+        dividerEl.style.display = 'none';
+        document.getElementById('empty-note').style.display = 'block';
+        return;
+      }
+      serverListEl.innerHTML = servers.map(s => `
+        <label class="server-item">
+          <input type="checkbox" value="${escapeHtml(s.id)}">
+          <span class="info">
+            <span class="name">${escapeHtml(s.name || s.host)}</span>
+            <span class="host">${escapeHtml(s.host || '')}</span>
+          </span>
+        </label>
+      `).join('');
+    });
+
+    function selectedIds() {
+      return [...serverListEl.querySelectorAll('input[type="checkbox"]:checked')].map(c => c.value);
+    }
+
+    function updateOpenBtn() {
+      const n = selectedIds().length;
+      openSelectedBtn.disabled = n === 0;
+      openSelectedBtn.textContent = n > 1 ? `Open ${n} Servers` : 'Open Selected';
+    }
+
+    serverListEl.addEventListener('change', updateOpenBtn);
+
+    openSelectedBtn.addEventListener('click', () => {
+      const ids = selectedIds();
+      if (!ids.length) return;
+      openSelectedBtn.disabled = true;
+      openSelectedBtn.textContent = 'Opening…';
+      window.kvmAPI.openServers(ids);
     });
 
     // Show error if passed
@@ -154,7 +254,10 @@
       if (e.key === 'Enter') connect();
     });
 
-    hostInput.focus();
+    document.getElementById('open-settings-link').addEventListener('click', (e) => {
+      e.preventDefault();
+      window.kvmAPI.openSettings();
+    });
   </script>
 </body>
 </html>

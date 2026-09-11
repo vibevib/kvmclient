@@ -1,4 +1,4 @@
-# KVM Client
+# KVM
 
 > **Warning:** This is fully vibecoded shitty code.
 
@@ -42,7 +42,7 @@ The build outputs a `.dmg` installer to `dist/`.
    ```bash
    npm run build
    ```
-5. Find the installer at `dist/KVM Client-1.0.0.dmg`
+5. Find the installer at `dist/KVM-1.0.0.dmg`
 
 ## Keyboard Shortcuts
 
@@ -79,7 +79,7 @@ All overrides are editable in Settings > CSS Overrides.
 
 ## Configuration
 
-Settings are stored in `~/Library/Application Support/kvmclient/config.json`.
+Settings are stored in `~/Library/Application Support/KVM/config.json`.
 
 ## Customization
 

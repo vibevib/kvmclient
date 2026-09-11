@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Sessions</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: #0b0b0b;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      overflow: hidden;
+    }
+    #tabs {
+      display: flex;
+      gap: 6px;
+      padding: 8px;
+      height: 100%;
+      width: 100%;
+    }
+    /* vertical strip (left/right) */
+    body.pos-left #tabs, body.pos-right #tabs {
+      flex-direction: column;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    /* horizontal strip (top/bottom) */
+    body.pos-top #tabs, body.pos-bottom #tabs {
+      flex-direction: row;
+      overflow-x: auto;
+      overflow-y: hidden;
+      align-items: stretch;
+    }
+    .tab {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      background: #1b1b1b;
+      color: #ccc;
+      cursor: pointer;
+      padding: 8px 4px;
+      transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+      overflow: hidden;
+    }
+    body.pos-left .tab, body.pos-right .tab { width: 100%; min-height: 54px; }
+    body.pos-top .tab, body.pos-bottom .tab { height: 100%; min-width: 76px; }
+    .tab:hover { background: #262626; border-color: #3a3a3a; }
+    .tab .num {
+      font-size: 16px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Monaco', monospace;
+      line-height: 1;
+    }
+    .tab .name {
+      font-size: 10px;
+      color: #999;
+      max-width: 100%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+    }
+    .tab.active {
+      background: #0a5bd6;
+      border-color: #2b7cff;
+      color: #fff;
+    }
+    .tab.active .name { color: #dfe9ff; }
+    .tab.idle { opacity: 0.55; border-style: dashed; }
+    .tab.suspended { opacity: 0.55; }
+    .tab .badge {
+      font-size: 9px;
+      line-height: 1;
+      min-height: 9px;
+      color: #7ee787; /* connected dot color */
+    }
+    .tab.suspended .badge { color: #e0a458; }
+    .gear {
+      flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      border: none; background: none; color: #666; cursor: pointer;
+      font-size: 18px; border-radius: 8px; padding: 6px;
+    }
+    body.pos-left .gear, body.pos-right .gear { width: 100%; min-height: 40px; }
+    body.pos-top .gear, body.pos-bottom .gear { height: 100%; min-width: 44px; }
+    .gear:hover { color: #ccc; background: #1b1b1b; }
+    .empty { color: #555; font-size: 11px; padding: 10px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div id="tabs"></div>
+
+  <script>
+    let state = null;
+    const root = document.getElementById('tabs');
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function render() {
+      if (!state) return;
+      document.body.className = 'pos-' + (state.position || 'right');
+      // Over content → transparent strip (buttons float); own area → solid sidebar
+      document.body.style.background = state.overlay ? 'transparent' : '#0b0b0b';
+      let html = '';
+      if (!state.tabs.length) {
+        html += '<div class="empty">No tabs<br>configured</div>';
+      }
+      state.tabs.forEach(t => {
+        const cls = ['tab'];
+        if (t.active) cls.push('active');
+        else if (t.suspended) cls.push('suspended');
+        else if (!t.connected) cls.push('idle');
+        const badge = t.suspended ? '❚❚' : (t.connected ? '●' : '');
+        html += `<button class="${cls.join(' ')}" data-i="${t.index}" title="${escapeHtml(t.label)}">
+          <span class="num">${t.index + 1}</span>
+          <span class="name">${escapeHtml(t.label)}</span>
+          <span class="badge">${badge}</span>
+        </button>`;
+      });
+      html += '<button class="gear" id="gear" title="Configure tabs">⚙</button>';
+      root.innerHTML = html;
+    }
+
+    root.addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (tab) { window.tabbar.switchTab(parseInt(tab.dataset.i, 10)); return; }
+      if (e.target.closest('#gear')) window.tabbar.openSettings();
+    });
+
+    window.tabbar.onState((s) => { state = s; render(); });
+    window.tabbar.getState().then((s) => { state = s; render(); });
+  </script>
+</body>
+</html>

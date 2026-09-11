@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Video Color</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #161616;
+      color: #e0e0e0;
+      margin: 0;
+      padding: 16px 18px;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      margin: 0 0 2px 0;
+      letter-spacing: -0.2px;
+    }
+    #target {
+      font-size: 11px;
+      color: #777;
+      margin: 0 0 12px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .group {
+      font-size: 10px;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 12px 0 8px 0;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 74px 1fr 58px;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .label {
+      font-size: 12px;
+      color: #aaa;
+      white-space: nowrap;
+    }
+    .label.r { color: #ff6b6b; font-weight: 600; }
+    .label.g { color: #7ee787; font-weight: 600; }
+    .label.b { color: #6cb6ff; font-weight: 600; }
+    input[type="range"] {
+      width: 100%;
+      accent-color: #007aff;
+      cursor: pointer;
+    }
+    input[type="number"] {
+      width: 100%;
+      padding: 5px 6px;
+      border: none;
+      border-radius: 6px;
+      background: #252525;
+      color: #e0e0e0;
+      font-size: 12px;
+      font-family: 'SF Mono', 'Monaco', monospace;
+      text-align: right;
+    }
+    input[type="number"]:focus {
+      outline: none;
+      background: #2d2d2d;
+      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.35);
+    }
+    .hint {
+      font-size: 10px;
+      color: #555;
+      margin: 8px 0 12px 0;
+      line-height: 1.4;
+    }
+    .buttons { display: flex; flex-direction: column; gap: 8px; }
+    .btn-row { display: flex; gap: 8px; }
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.12s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    button.primary { background: #007aff; color: #fff; }
+    button.primary:hover { background: #0066d6; }
+    button.secondary { background: #2a2a2a; color: #e0e0e0; }
+    button.secondary:hover { background: #333; }
+    button:disabled { background: #222; color: #555; cursor: not-allowed; }
+    #reset { flex: 0 0 auto; background: none; color: #888; padding: 8px 12px; }
+    #reset:hover { color: #ccc; background: #222; }
+    #status {
+      height: 14px;
+      font-size: 11px;
+      color: #7ee787;
+      text-align: center;
+      margin-top: 8px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    #status.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <h1>Video Adjustments</h1>
+  <p id="target">Adjusting…</p>
+
+  <div id="rows"></div>
+
+  <p class="hint">Blue removes yellow · red vs green removes green cast · Tone tweaks the picture. Arrow keys nudge the boxes.</p>
+
+  <div class="buttons">
+    <div class="btn-row">
+      <button id="reset" class="secondary" title="Revert to the saved values">Reset</button>
+      <button id="save-this" class="secondary">Save to this server</button>
+    </div>
+    <button id="save-all" class="primary">Save to all servers</button>
+  </div>
+  <div id="status"></div>
+
+  <script>
+    // Adjustable parameters, grouped. `dec` = display decimals, `fine` = number-box step.
+    const PARAMS = [
+      { key: 'r', label: 'Red',        group: 'White balance', cls: 'r', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.10 },
+      { key: 'g', label: 'Green',      group: 'White balance', cls: 'g', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.09 },
+      { key: 'b', label: 'Blue',       group: 'White balance', cls: 'b', min: 0.5, max: 1.5, step: 0.005, fine: 0.001, dec: 3, def: 1.22 },
+      { key: 'brightness', label: 'Brightness', group: 'Tone', cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, def: 1.00 },
+      { key: 'contrast',   label: 'Contrast',   group: 'Tone', cls: '', min: 0.5, max: 1.5, step: 0.01, fine: 0.01, dec: 2, def: 1.00 },
+      { key: 'saturate',   label: 'Saturation', group: 'Tone', cls: '', min: 0.0, max: 2.0, step: 0.01, fine: 0.01, dec: 2, def: 1.00 }
+    ];
+    const BY_KEY = Object.fromEntries(PARAMS.map(p => [p.key, p]));
+    const keys = PARAMS.map(p => p.key);
+    const state = {};
+    let serverId = null, serverName = null;
+
+    // Build rows (with group headers)
+    (function build() {
+      let html = '', lastGroup = null;
+      PARAMS.forEach(p => {
+        if (p.group !== lastGroup) { html += `<div class="group">${p.group}</div>`; lastGroup = p.group; }
+        html += `
+          <div class="row">
+            <span class="label ${p.cls}">${p.label}</span>
+            <input type="range" id="${p.key}-range" min="${p.min}" max="${p.max}" step="${p.step}">
+            <input type="number" id="${p.key}-num" min="${p.min}" max="${p.max}" step="${p.fine}">
+          </div>`;
+      });
+      document.getElementById('rows').innerHTML = html;
+    })();
+
+    const els = {};
+    keys.forEach(k => {
+      els[k] = { range: document.getElementById(k + '-range'), num: document.getElementById(k + '-num') };
+    });
+
+    function clamp(p, v) {
+      v = parseFloat(v);
+      if (isNaN(v)) return p.def;
+      return Math.min(p.max, Math.max(p.min, v));
+    }
+
+    // Live preview: throttle a bit while dragging so updates don't flood/queue,
+    // then flush immediately on "change" (fires the moment you release the slider
+    // or commit a number) so the final value lands in the window instantly.
+    let rafId = null;
+    function sendPreview() {
+      window.kvmAPI.previewVideoWB({ ...state });
+    }
+    function schedulePreview() {
+      // one update per animation frame → continuous & immediate on every move
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => { rafId = null; sendPreview(); });
+    }
+    function flushPreview() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      sendPreview();
+    }
+
+    function setParam(key, v, from, immediate) {
+      const p = BY_KEY[key];
+      v = clamp(p, v);
+      state[key] = v;
+      if (from !== 'range') els[key].range.value = v;
+      if (from !== 'num') els[key].num.value = v.toFixed(p.dec);
+      if (immediate) flushPreview(); else schedulePreview();
+    }
+
+    keys.forEach(k => {
+      // dragging / typing → throttled live preview
+      els[k].range.addEventListener('input', e => setParam(k, e.target.value, 'range', false));
+      els[k].num.addEventListener('input', e => setParam(k, e.target.value, 'num', false));
+      // release slider / commit number → apply the final value immediately
+      els[k].range.addEventListener('change', e => setParam(k, e.target.value, 'range', true));
+      els[k].num.addEventListener('change', e => setParam(k, e.target.value, 'num', true));
+    });
+
+    function applyValues(vals, doPreview) {
+      keys.forEach(k => {
+        const p = BY_KEY[k];
+        const v = vals[k] != null ? vals[k] : p.def;
+        state[k] = v;
+        els[k].range.value = v;
+        els[k].num.value = Number(v).toFixed(p.dec);
+      });
+      if (doPreview) flushPreview();
+    }
+
+    function flash(msg) {
+      const s = document.getElementById('status');
+      s.textContent = msg;
+      s.classList.add('show');
+      setTimeout(() => s.classList.remove('show'), 1600);
+    }
+
+    async function load() {
+      const wb = await window.kvmAPI.getVideoWB();
+      serverId = wb.serverId;
+      serverName = wb.serverName;
+      applyValues(wb, false);
+
+      document.getElementById('target').textContent =
+        serverName ? `Adjusting: ${serverName}` : 'No active video window';
+
+      const thisBtn = document.getElementById('save-this');
+      if (serverId) {
+        thisBtn.textContent = `Save to “${serverName}” only`;
+        thisBtn.disabled = false;
+      } else {
+        thisBtn.disabled = true;
+      }
+    }
+
+    document.getElementById('save-all').addEventListener('click', async () => {
+      await window.kvmAPI.saveVideoWB({ ...state, scope: 'all' });
+      flash('Saved to all servers');
+    });
+
+    document.getElementById('save-this').addEventListener('click', async () => {
+      if (!serverId) return;
+      await window.kvmAPI.saveVideoWB({ ...state, scope: serverId });
+      flash(`Saved to ${serverName}`);
+    });
+
+    document.getElementById('reset').addEventListener('click', async () => {
+      const wb = await window.kvmAPI.getVideoWB();
+      applyValues(wb, true); // re-preview saved values, discarding unsaved changes
+      flash('Reverted to saved');
+    });
+
+    load();
+  </script>
+</body>
+</html>

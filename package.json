@@ -1,20 +1,21 @@
 {
-  "name": "RC",
+  "name": "kvm",
   "version": "1.0.0",
-  "description": "RC - Remote Control client",
+  "description": "KVM client",
   "main": "main.js",
-  "productName": "RC",
+  "productName": "KVM",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac"
   },
   "build": {
-    "appId": "com.rc.app",
-    "productName": "RC Client",
+    "appId": "com.kvm.app",
+    "productName": "KVM",
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
-      "icon": "assets/icons/icon.icns"
+      "icon": "assets/icons/icon.icns",
+      "identity": null
     }
   },
   "devDependencies": {
