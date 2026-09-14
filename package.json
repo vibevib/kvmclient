@@ -6,7 +6,8 @@
   "productName": "KVM",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder --mac"
+    "build": "electron-builder --mac",
+    "test": "playwright test"
   },
   "build": {
     "appId": "com.kvm.app",
@@ -19,6 +20,7 @@
     }
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
     "electron-icon-builder": "^2.0.1"

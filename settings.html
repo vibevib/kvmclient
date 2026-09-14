@@ -508,8 +508,11 @@
       renderTabItems();
     }
 
+    // Escapes quotes too — these results are interpolated into attribute values.
     function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return String(str == null ? '' : str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     // Push current CSS overrides to the live session so changes apply immediately.
@@ -626,7 +629,10 @@
 
     document.getElementById('add-tab-item').addEventListener('click', () => {
       const first = (config.servers[0] && config.servers[0].id) || '';
-      config.tabs.items.push({ serverId: first, behavior: 'keep' });
+      // Stable id: sessions are keyed by it, so two buttons for the same server
+      // are independent tabs rather than aliases.
+      const id = 't' + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
+      config.tabs.items.push({ id, serverId: first, behavior: 'keep' });
       renderTabItems();
       applyTabsLive();
     });
@@ -653,10 +659,14 @@
           // CSS lines scoped to the removed server fall back to "All servers"
           if (removed) {
             config.cssOverrides.forEach(o => { if (o.scope === removed.id) o.scope = 'all'; });
+            // Drop session buttons pointing at the server that no longer exists,
+            // otherwise they render as the first server but still hold a dead id.
+            config.tabs.items = config.tabs.items.filter(it => it.serverId !== removed.id);
           }
           renderServersList();
           renderCSSList();
           renderTabItems();
+          applyTabsLive();
         } else if (e.target.dataset.type === 'tab-item') {
           config.tabs.items.splice(index, 1);
           renderTabItems();

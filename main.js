@@ -31,11 +31,9 @@ function wbFilterValue(p) {
   return v;
 }
 
-function wbFilterCss(p) {
-  return `filter: ${wbFilterValue(p)}`;
-}
-
-const VIDEO_WB_CSS = wbFilterCss(VIDEO_WB_DEFAULT);
+// Identity params (no correction) — the default for a server's own layer.
+const WB_IDENTITY = { r: 1, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
+const WB_KEYS = ['r', 'g', 'b', 'brightness', 'contrast', 'saturate', 'sharpen'];
 
 // Initialize store with defaults
 const store = new Store({
@@ -47,10 +45,11 @@ const store = new Store({
     cssOverrides: [
       { selector: '.un-collapse-triangle-collapsed', css: 'opacity: 0.01 !important', enabled: true, scope: 'all' },
       { selector: '.kvm-video-info', css: 'display: none !important', enabled: true, scope: 'all' },
-      { selector: '#stream-canvas', css: 'filter: contrast(1.1) brightness(1.2)', enabled: true, scope: 'all' },
-      { selector: '.kvm-page', css: 'height: 100% !important', enabled: true, scope: 'all' },
-      { selector: '#video-wrapper', css: VIDEO_WB_CSS, enabled: true, scope: 'all' }
+      { selector: '.kvm-page', css: 'height: 100% !important', enabled: true, scope: 'all' }
     ],
+    // Video adjustment layers, kept out of cssOverrides so Settings (which writes
+    // that whole array back) can never clobber them.
+    video: { global: { ...VIDEO_WB_DEFAULT }, servers: {} },
     blockedHotkeys: [
       { key: 'w', meta: true, description: 'Close tab', enabled: true },
       { key: 'q', meta: true, description: 'Quit app', enabled: true },
@@ -84,16 +83,24 @@ const store = new Store({
   }
 })();
 
-// Seed the video white-balance override into existing configs (one-time, so a
-// later manual delete sticks). New installs already get it via the defaults above.
-(function seedVideoWrapper() {
-  if (store.get('videoWrapperSeeded')) return;
+// One-time migration: video params used to live as a generated `#video-wrapper`
+// CSS-override row. Move them into their own `video` key and drop those rows.
+(function migrateVideoParams() {
+  if (store.get('videoMigrated')) return;
   const overrides = store.get('cssOverrides') || [];
-  if (!overrides.some(o => o.selector === '#video-wrapper')) {
-    overrides.push({ selector: '#video-wrapper', css: VIDEO_WB_CSS, enabled: true, scope: 'all' });
-    store.set('cssOverrides', overrides);
+  const rows = overrides.filter(o => o.selector === '#video-wrapper');
+  if (rows.length) {
+    const video = store.get('video') || { global: { ...VIDEO_WB_DEFAULT }, servers: {} };
+    video.servers = video.servers || {};
+    for (const row of rows) {
+      const params = wbParamsFromCss(row.css);
+      if ((row.scope || 'all') === 'all') video.global = params;
+      else video.servers[row.scope] = params;
+    }
+    store.set('video', video);
+    store.set('cssOverrides', overrides.filter(o => o.selector !== '#video-wrapper'));
   }
-  store.set('videoWrapperSeeded', true);
+  store.set('videoMigrated', true);
 })();
 
 // Open windows keyed by a unique instance id — several windows may show the same
@@ -103,7 +110,6 @@ const windows = new Map();
 let nextInstanceId = 1;
 let settingsWindow = null;
 let colorWindow = null;
-let colorTargetInstanceId = null; // the server instance the color panel adjusts
 let lastActiveInstanceId = null;
 
 // Sessions are records in `windows`; several may share one BrowserWindow. Per-window
@@ -148,22 +154,27 @@ function wbParamsFromCss(css) {
   };
 }
 
-// Identity params (no correction) — the default for a server's own layer.
-const WB_IDENTITY = { r: 1, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
+// Coerce an arbitrary object to a full, finite param set.
+function sanitizeWB(params, base) {
+  const out = {};
+  for (const k of WB_KEYS) {
+    const n = Number((params || {})[k]);
+    out[k] = Number.isFinite(n) ? n : base[k];
+  }
+  return out;
+}
 
 // The GLOBAL video layer (applies to every server); defaults to the tuned base.
 function globalWB() {
-  const overrides = store.get('cssOverrides') || [];
-  const g = overrides.find(o => o.selector === '#video-wrapper' && (o.scope || 'all') === 'all');
-  return g ? wbParamsFromCss(g.css) : { ...VIDEO_WB_DEFAULT };
+  const v = store.get('video') || {};
+  return sanitizeWB(v.global, VIDEO_WB_DEFAULT);
 }
 
 // A server's OWN video layer (applies only to that server); identity if unset.
 function serverWB(serverId) {
   if (!serverId) return { ...WB_IDENTITY };
-  const overrides = store.get('cssOverrides') || [];
-  const s = overrides.find(o => o.selector === '#video-wrapper' && o.scope === serverId);
-  return s ? wbParamsFromCss(s.css) : { ...WB_IDENTITY };
+  const v = store.get('video') || {};
+  return sanitizeWB((v.servers || {})[serverId], WB_IDENTITY);
 }
 
 // Compose two layers: gains and tone multiply, so a server layer tweaks the global.
@@ -193,9 +204,7 @@ function normalizeHost(host) {
 function buildCSS(serverId) {
   const overrides = store.get('cssOverrides') || [];
   return overrides
-    // #video-wrapper (the video adjustment) is applied via element detection, not
-    // as a selector rule, so the stream is hit whatever its markup — see applyVideoFilter.
-    .filter(o => o.enabled && o.selector !== '#video-wrapper' && ((o.scope || 'all') === 'all' || o.scope === serverId))
+    .filter(o => o.enabled && ((o.scope || 'all') === 'all' || o.scope === serverId))
     .map(o => `${o.selector} { ${o.css} }`)
     .join(' ');
 }
@@ -215,27 +224,37 @@ function isHotkeyBlocked(input) {
 // Apply CSS overrides to a single view, replacing any previously injected styles.
 // insertCSS() is additive and returns a key; without removing the old key first, a
 // disabled/edited/deleted rule would linger until a full page reload.
-async function applyCSSToView(rec) {
-  if (!rec || !rec.view || rec.view.webContents.isDestroyed()) return;
-  const wc = rec.view.webContents;
+// Serialized per session: two overlapping calls would both read the same old key,
+// both remove it, then both insert — orphaning one stylesheet that can never be
+// removed (a disabled rule would stay applied until a full reload).
+function applyCSSToView(rec) {
+  if (!rec || !rec.view || rec.view.webContents.isDestroyed()) return Promise.resolve();
 
-  if (rec.cssKey) {
-    try {
-      await wc.removeInsertedCSS(rec.cssKey);
-    } catch (e) {
-      // Key may already be gone (e.g. the page reloaded); ignore.
-    }
-    rec.cssKey = null;
-  }
+  const run = async () => {
+    if (!rec.view || rec.view.webContents.isDestroyed()) return;
+    const wc = rec.view.webContents;
 
-  const css = buildCSS(rec.serverId);
-  if (css) {
-    try {
-      rec.cssKey = await wc.insertCSS(css);
-    } catch (e) {
-      // webContents may have navigated away mid-apply; ignore.
+    if (rec.cssKey) {
+      try {
+        await wc.removeInsertedCSS(rec.cssKey);
+      } catch (e) {
+        // Key may already be gone (e.g. the page reloaded); ignore.
+      }
+      rec.cssKey = null;
     }
-  }
+
+    const css = buildCSS(rec.serverId);
+    if (css && !wc.isDestroyed()) {
+      try {
+        rec.cssKey = await wc.insertCSS(css);
+      } catch (e) {
+        // webContents may have navigated away mid-apply; ignore.
+      }
+    }
+  };
+
+  rec.cssQueue = (rec.cssQueue || Promise.resolve()).then(run, run);
+  return rec.cssQueue;
 }
 
 // Re-apply CSS to every open server window
@@ -275,6 +294,18 @@ function findRecBySender(event) {
   return null;
 }
 
+// Privileged IPC is only for our own local pages. The remote KVM page shares the
+// session BrowserView (and therefore preload-remote), so without this check it —
+// or anyone MITM-ing it on the LAN — could read every configured host via
+// get-config or redirect the session via connect.
+function isTrustedSender(event) {
+  try {
+    return (event.sender.getURL() || '').startsWith('file://');
+  } catch (e) {
+    return false;
+  }
+}
+
 // ---- Windows ----------------------------------------------------------------
 
 // Remember which servers have windows open, so the same set reopens next launch.
@@ -293,7 +324,7 @@ function persistOpenSessions() {
 
 // Create one session (a BrowserView) inside a window and start loading. `server`
 // null shows the connect/splash page. Returns the session record (also in `windows`).
-function createSession(win, server) {
+function createSession(win, server, itemId) {
   const id = nextInstanceId++;
   const view = new BrowserView({
     webPreferences: {
@@ -305,18 +336,19 @@ function createSession(win, server) {
       backgroundThrottling: false // keep hidden 'keep' sessions alive
     }
   });
-  const behItem = server ? getTabsConfig().items.find(it => it.serverId === server.id) : null;
   const rec = {
     id, win, view, cssKey: null, error: null,
     serverId: server ? server.id : null, server: server || null,
-    behavior: (behItem && behItem.behavior === 'suspend') ? 'suspend' : 'keep', suspended: false
+    itemId: itemId || null, suspended: false
   };
   windows.set(id, rec);
 
   view.webContents.on('did-finish-load', () => { rec.cssKey = null; applyCSSToView(rec); applyVideoFilter(rec); });
   view.webContents.on('did-navigate-in-page', () => { applyCSSToView(rec); applyVideoFilter(rec); });
-  view.webContents.on('did-fail-load', (e, code, desc, url) => {
+  view.webContents.on('did-fail-load', (e, code, desc, url, isMainFrame) => {
     if (code === -3) return;
+    // A failing sub-frame (an iframe inside the KVM UI) must not tear down the session
+    if (!isMainFrame) return;
     if (url.includes('connect.html') || url.startsWith('about:')) return;
     showConnectPage(rec, `Could not connect to ${url}\n${desc} (${code})`);
     if (win.__tab) pushWinTabsState(win);
@@ -332,6 +364,19 @@ function createSession(win, server) {
   if (server) loadHostInView(rec, server.host);
   else view.webContents.loadFile('connect.html');
   return rec;
+}
+
+// A BrowserView's webContents is NOT destroyed when its window closes (it lives
+// until the view is garbage collected), so release it explicitly — otherwise the
+// remote stream keeps running and holding memory after the window is gone.
+function destroyView(view) {
+  if (!view) return;
+  const wc = view.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  try {
+    if (typeof wc.destroy === 'function') wc.destroy();
+    else if (typeof wc.close === 'function') wc.close();
+  } catch (e) { /* already gone */ }
 }
 
 function getWinSessions(win) {
@@ -389,7 +434,8 @@ function buildWinTabsState(win) {
   const activeId = win.__tab ? win.__tab.activeId : null;
   const tabs = cfg.items.map((it, i) => {
     const server = getServerById(it.serverId);
-    const s = sessions.find(x => x.serverId === it.serverId);
+    const s = sessions.find(x => x.itemId === it.id)
+      || sessions.find(x => !x.itemId && x.serverId === it.serverId);
     return {
       index: i,
       label: server ? (server.name || server.host) : (it.serverId || '?'),
@@ -410,26 +456,34 @@ function pushWinTabsState(win) {
 
 // Switch a window to the session for `serverId`: focus it if connected here, else
 // create + connect it. Suspends the outgoing session if its button is 'suspend'.
-function activateServerInWin(win, serverId) {
-  if (!win || win.isDestroyed() || !win.__tab) return;
-  const server = getServerById(serverId);
+function activateItemInWin(win, item) {
+  if (!win || win.isDestroyed() || !win.__tab || !item) return;
+  const server = getServerById(item.serverId);
   if (!server) return;
   const t = win.__tab;
-  let sess = getWinSessions(win).find(s => s.serverId === serverId);
+  const sessions = getWinSessions(win);
+  // Keyed by button id; otherwise adopt the window's item-less first session
+  // when it already shows this server.
+  let sess = sessions.find(s => s.itemId === item.id);
+  if (!sess) {
+    const adopt = sessions.find(s => !s.itemId && s.serverId === item.serverId);
+    if (adopt) { adopt.itemId = item.id; sess = adopt; }
+  }
   const cur = windows.get(t.activeId);
 
-  if (cur && (!sess || cur.id !== sess.id) && cur.view && !cur.view.webContents.isDestroyed() && cur.behavior === 'suspend') {
+  if (cur && (!sess || cur.id !== sess.id) && cur.view && !cur.view.webContents.isDestroyed()
+      && itemBehavior(cur.itemId) === 'suspend') {
     cur.suspended = true;
     try { cur.view.webContents.loadURL('about:blank'); } catch (e) {}
   }
 
   if (!sess) {
-    sess = createSession(win, server);
+    sess = createSession(win, server, item.id);
     t.sessionIds.push(sess.id);
     win.addBrowserView(sess.view);
   } else if (sess.suspended) {
     sess.suspended = false;
-    loadHostInView(sess, sess.server.host);
+    loadHostInView(sess, server.host);
   }
 
   t.activeId = sess.id;
@@ -490,9 +544,10 @@ function switchWinRelative(delta) {
   const items = getTabsConfig().items;
   if (!items.length) return;
   const cur = windows.get(win.__tab.activeId);
-  let idx = cur ? items.findIndex(it => it.serverId === cur.serverId) : -1;
+  let idx = cur ? items.findIndex(it => it.id === cur.itemId) : -1;
+  if (idx < 0 && cur) idx = items.findIndex(it => it.serverId === cur.serverId);
   idx = (idx + delta + items.length) % items.length;
-  activateServerInWin(win, items[idx].serverId);
+  activateItemInWin(win, items[idx]);
 }
 
 // Live-apply the shared tabs config (position/size/overlay/buttons) to every open
@@ -530,11 +585,23 @@ function openServerWindow(server) {
   win.on('resize', () => layoutWindow(win));
   win.on('enter-full-screen', () => layoutWindow(win));
   win.on('leave-full-screen', () => layoutWindow(win));
-  win.on('focus', () => { if (win.__tab && win.__tab.activeId) lastActiveInstanceId = win.__tab.activeId; });
+  win.on('focus', () => {
+    if (win.__tab && win.__tab.activeId) lastActiveInstanceId = win.__tab.activeId;
+    // Keep the colour panel pointed at the session the user is actually looking at
+    if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
+  });
 
   win.on('closed', () => {
-    for (const s of getWinSessions(win)) windows.delete(s.id);
-    if (win.__tab && win.__tab.overlay) overlayOwner.delete(win.__tab.overlay.webContents.id);
+    // Tear the views down explicitly: a BrowserView's webContents outlives its
+    // window until GC, so the KVM stream would keep running after close.
+    for (const s of getWinSessions(win)) {
+      destroyView(s.view);
+      windows.delete(s.id);
+    }
+    if (win.__tab && win.__tab.overlay) {
+      overlayOwner.delete(win.__tab.overlay.webContents.id);
+      destroyView(win.__tab.overlay);
+    }
     win.__tab = null;
     if (!app.isQuitting) persistOpenSessions();
     createMenu();
@@ -561,9 +628,14 @@ function getActiveServerRec() {
 // Reload the active server window
 function reloadActiveSession() {
   const rec = getActiveServerRec();
-  if (rec) {
-    const latest = getServerById(rec.serverId);
-    loadHostInView(rec, latest ? latest.host : rec.server.host);
+  if (!rec) return;
+  // The splash session (and one connected via the manual host box) has no server
+  const latest = rec.serverId ? getServerById(rec.serverId) : null;
+  const host = latest ? latest.host : (rec.server ? rec.server.host : null);
+  if (host) {
+    loadHostInView(rec, host);
+  } else if (rec.view && !rec.view.webContents.isDestroyed()) {
+    rec.view.webContents.reload();
   }
 }
 
@@ -633,8 +705,12 @@ function videoFilterScript(value) {
       doc.querySelectorAll('video,canvas,img').forEach(function(e){var r=e.getBoundingClientRect();var a=r.width*r.height;if(a>area){area=a;best=e;}});
       if(best)set.add(best);
     }catch(e){}});
-    set.forEach(function(e){ if(v){e.style.setProperty('filter',v,'important');}else{e.style.removeProperty('filter');} });
-    return set.size;
+    // Drop any element contained by another match: filtering a wrapper AND the
+    // canvas inside it would apply the correction twice (compounded).
+    var arr=Array.from(set);
+    var outer=arr.filter(function(e){return !arr.some(function(o){return o!==e&&o.contains&&o.contains(e);});});
+    outer.forEach(function(e){ if(v){e.style.setProperty('filter',v,'important');}else{e.style.removeProperty('filter');} });
+    return outer.length;
   })();`;
 }
 
@@ -655,8 +731,9 @@ function previewVideoFilter(rec, value) {
 }
 
 function openColorAdjust() {
+  // Only used to position the panel; the panel itself always targets whichever
+  // session is active at the time of each IPC call.
   const target = getActiveServerRec();
-  colorTargetInstanceId = target ? target.id : null;
 
   if (colorWindow && !colorWindow.isDestroyed()) {
     colorWindow.show();
@@ -717,8 +794,34 @@ function getTabsConfig() {
     overlay: t.overlay !== false,
     showButtons: t.showButtons !== false,
     size: Number(t.size) > 0 ? Number(t.size) : 76,
-    items: Array.isArray(t.items) ? t.items : []
+    items: tabItems(t)
   };
+}
+
+let tabItemSeq = 0;
+// Sessions are keyed by BUTTON id (not serverId) so two buttons for the same
+// server stay independent. Backfill ids for configs written before they existed.
+function tabItems(t) {
+  let items = Array.isArray(t.items) ? t.items : [];
+  if (items.some(it => !it || !it.id)) {
+    items = items.map((it, i) => (it && it.id)
+      ? it
+      : { ...(it || {}), id: `t${Date.now().toString(36)}-${i}-${tabItemSeq++}` });
+    store.set('tabs', { ...t, items });
+  }
+  return items;
+}
+
+// A button's behavior, read live so changing it in Settings affects open sessions.
+function itemBehavior(itemId) {
+  if (!itemId) return 'keep';
+  const it = getTabsConfig().items.find(i => i.id === itemId);
+  return it && it.behavior === 'suspend' ? 'suspend' : 'keep';
+}
+
+// Don't claim an accelerator the user asked to pass through to the remote session.
+function accelUnlessBlocked(accelerator, key) {
+  return isHotkeyBlocked({ key, meta: true }) ? undefined : accelerator;
 }
 
 
@@ -755,12 +858,13 @@ function createMenu() {
     const sessions = getWinSessions(focusedWin);
     presetItems.forEach((it) => {
       const server = getServerById(it.serverId);
-      const sess = sessions.find(s => s.serverId === it.serverId);
+      const sess = sessions.find(s => s.itemId === it.id)
+        || sessions.find(s => !s.itemId && s.serverId === it.serverId);
       tabsSubmenu.push({
         label: server ? (server.name || server.host) : (it.serverId || '?'),
         type: 'checkbox',
         checked: !!(sess && sess.id === winTab.activeId),
-        click: () => activateServerInWin(focusedWin, it.serverId)
+        click: () => activateItemInWin(focusedWin, it)
       });
     });
   }
@@ -816,7 +920,7 @@ function createMenu() {
       submenu: [
         {
           label: 'Reload Session',
-          accelerator: 'Cmd+R',
+          accelerator: accelUnlessBlocked('Cmd+R', 'r'),
           click: () => reloadActiveSession()
         },
         {
@@ -831,7 +935,7 @@ function createMenu() {
     {
       label: 'Window',
       submenu: [
-        { label: 'Minimize', accelerator: 'Cmd+M', role: 'minimize' },
+        { label: 'Minimize', accelerator: accelUnlessBlocked('Cmd+M', 'm'), role: 'minimize' },
         { label: 'Zoom', role: 'zoom' }
       ]
     }
@@ -844,18 +948,22 @@ function createMenu() {
 // ---- IPC --------------------------------------------------------------------
 
 ipcMain.handle('get-config', (event) => {
+  if (!isTrustedSender(event)) return { servers: [], cssOverrides: [], blockedHotkeys: [], tabs: getTabsConfig(), host: '' };
   const rec = findRecBySender(event);
   return {
     servers: getServers(),
     cssOverrides: store.get('cssOverrides'),
     blockedHotkeys: store.get('blockedHotkeys'),
     tabs: getTabsConfig(),
-    // connect.html (running inside a server view) prefills this to retry the host
-    host: rec ? (rec.server.host || '') : ''
+    // connect.html (running inside a session view) prefills this to retry the host.
+    // The splash session has no server, hence the null guard.
+    host: rec && rec.server ? (rec.server.host || '') : ''
   };
 });
 
 ipcMain.handle('save-config', (event, newConfig) => {
+  // Remember the hosts we were on, so an edited host reconnects its open sessions
+  const prevHosts = new Map(getServers().map(s => [s.id, s.host]));
   if (newConfig.servers !== undefined) store.set('servers', newConfig.servers);
   if (newConfig.cssOverrides !== undefined) store.set('cssOverrides', newConfig.cssOverrides);
   if (newConfig.blockedHotkeys !== undefined) store.set('blockedHotkeys', newConfig.blockedHotkeys);
@@ -875,8 +983,11 @@ ipcMain.handle('save-config', (event, newConfig) => {
     for (const rec of windows.values()) {
       const latest = getServerById(rec.serverId);
       if (latest && !rec.win.isDestroyed()) {
+        const hostChanged = prevHosts.get(rec.serverId) !== latest.host;
         rec.server = latest;
         rec.win.setTitle(`${APP_NAME} — ${latest.name || latest.host}`);
+        // Editing a server's host should reconnect the sessions showing it
+        if (hostChanged && !rec.suspended) loadHostInView(rec, latest.host);
       }
     }
   }
@@ -896,6 +1007,7 @@ ipcMain.handle('reload-session', () => {
 });
 
 ipcMain.handle('get-connection-error', (event) => {
+  if (!isTrustedSender(event)) return null;
   const rec = findRecBySender(event);
   return rec ? rec.error : null;
 });
@@ -904,7 +1016,8 @@ ipcMain.handle('get-app-name', () => {
   return APP_NAME;
 });
 
-ipcMain.handle('open-settings', () => {
+ipcMain.handle('open-settings', (event) => {
+  if (!isTrustedSender(event)) return;
   openSettings();
 });
 
@@ -918,7 +1031,7 @@ ipcMain.handle('tabs-get-state', (event) => {
 ipcMain.handle('tabs-switch', (event, index) => {
   const win = overlayOwner.get(event.sender.id);
   const it = getTabsConfig().items[index];
-  if (win && it) activateServerInWin(win, it.serverId);
+  if (win && it) activateItemInWin(win, it);
   return true;
 });
 
@@ -938,6 +1051,7 @@ ipcMain.handle('update-tabs', (event, cfg) => {
 });
 
 ipcMain.handle('connect', (event, host) => {
+  if (!isTrustedSender(event)) return;
   const rec = findRecBySender(event);
   if (rec) loadHostInView(rec, host);
 });
@@ -961,25 +1075,24 @@ ipcMain.handle('preview-video-wb', (event, vals) => {
   return true;
 });
 
-// Persist one layer. scope 'all' → the global #video-wrapper override; a server id
-// → that server's own override (removed when it's identity, to stay clean).
+// Persist one layer: scope 'all' → the global layer, a server id → that server's
+// own layer (dropped when it's identity, to stay clean).
 ipcMain.handle('save-video-wb', (event, vals) => {
   const scope = vals.scope || 'all';
-  const params = vals.params || vals; // {r,g,b,brightness,contrast,saturate}
-  const overrides = store.get('cssOverrides') || [];
-  const idx = overrides.findIndex(o => o.selector === '#video-wrapper' && (o.scope || 'all') === scope);
+  const base = scope === 'all' ? VIDEO_WB_DEFAULT : WB_IDENTITY;
+  const params = sanitizeWB(vals.params || vals, base);
 
-  const isIdentity = ['r', 'g', 'b', 'brightness', 'contrast', 'saturate'].every(k => Number(params[k]) === 1)
-    && (Number(params.sharpen) || 0) === 0;
-  if (scope !== 'all' && isIdentity) {
-    if (idx >= 0) overrides.splice(idx, 1); // drop an all-neutral per-server layer
+  const video = store.get('video') || { global: { ...VIDEO_WB_DEFAULT }, servers: {} };
+  video.servers = video.servers || {};
+  if (scope === 'all') {
+    video.global = params;
+  } else if (WB_KEYS.every(k => params[k] === WB_IDENTITY[k])) {
+    delete video.servers[scope]; // all-neutral per-server layer → remove it
   } else {
-    const css = wbFilterCss(params);
-    if (idx >= 0) { overrides[idx].css = css; overrides[idx].enabled = true; }
-    else overrides.push({ selector: '#video-wrapper', css, enabled: true, scope });
+    video.servers[scope] = params;
   }
 
-  store.set('cssOverrides', overrides);
+  store.set('video', video);
   applyVideoFilterAll(); // re-apply the combined filter to every open window
   return true;
 });
@@ -988,6 +1101,7 @@ ipcMain.handle('save-video-wb', (event, vals) => {
 // (connect) window is reused for the first selection; the rest open as new
 // windows/instances.
 ipcMain.handle('open-servers', (event, ids) => {
+  if (!isTrustedSender(event)) return false;
   const rec = findRecBySender(event);
   const list = (Array.isArray(ids) ? ids : [ids]).map(getServerById).filter(Boolean);
   list.forEach((server, i) => {

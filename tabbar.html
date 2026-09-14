@@ -103,8 +103,11 @@
     let state = null;
     const root = document.getElementById('tabs');
 
+    // Escapes quotes too — these results are interpolated into attribute values.
     function escapeHtml(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     function render() {

@@ -30,6 +30,19 @@ To regenerate app icons after changing `assets/icon.png`:
 node generate-icons.js
 ```
 
+## Tests
+
+End-to-end tests drive the real app with Playwright's Electron support — each one
+launches the app against a throwaway profile and a fake KVM web server, so they
+never touch your config or need real hardware.
+
+```bash
+npm test
+```
+
+They cover the splash/picker, session restore, tab-strip switching, live CSS
+overrides, the video-adjustment layers, and the IPC hardening. Requires Node 20+.
+
 ## Servers & Connections
 
 Add servers in **Settings → General** (name + host; a bare IP like `192.168.1.100` gets `http://` added automatically). Open them from the **Connections** menu — each click opens a new window/instance.
