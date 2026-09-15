@@ -240,6 +240,64 @@ test.describe('settings + css', () => {
   });
 });
 
+// ARC.md documents hand-editing config.json as a supported way to add a server.
+// Such a server has no `id` — and ids are what every lookup keys on. With both
+// sides undefined, `s.id === it.serverId` matched EVERY server: getServerById()
+// returned the first id-less one (wrong host, wrong window title, wrong reload
+// target) and the Settings dropdowns marked every option selected, so each tab
+// button displayed the LAST server while pointing somewhere else entirely.
+test.describe('hand-edited config', () => {
+  const noIds = () => ({
+    servers: [{ name: 'Alpha', host: kvm.url }, { name: 'Beta', host: 'http://192.168.1.55' }],
+    cssOverrides: [], blockedHotkeys: [],
+    tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
+            items: [{ behavior: 'keep' }, { behavior: 'suspend' }] }
+  });
+
+  test('servers written without ids get stable, distinct ones', async () => {
+    const h = await launchApp(noIds());
+    try {
+      await openSettings(h.app); // any read of the config is enough to trigger the backfill
+      await expect.poll(() => (h.readConfig().servers || []).every(s => s.id), { timeout: 15000 }).toBe(true);
+
+      const ids = h.readConfig().servers.map(s => s.id);
+      expect(new Set(ids).size).toBe(ids.length); // distinct
+      // Names and hosts must survive the backfill untouched.
+      expect(h.readConfig().servers.map(s => s.name)).toEqual(['Alpha', 'Beta']);
+    } finally { await h.close(); }
+  });
+
+  test('a tab button with no server shows as unset instead of the wrong one', async () => {
+    const h = await launchApp(noIds());
+    try {
+      await openSettings(h.app);
+      const rows = JSON.parse(await evalInWindow(h.app, 'settings.html', `(function(){
+        document.querySelectorAll('.tab-content').forEach(function(p){
+          p.classList.toggle('active', p.id === 'tabsview'); });
+        return JSON.stringify([].slice.call(document.querySelectorAll('.tab-item-row')).map(function(r){
+          var sel = r.querySelector('.tab-server');
+          return {
+            shown: sel.options[sel.selectedIndex].text,
+            value: sel.value,
+            // More than one selected attribute is the bug: the browser silently
+            // keeps the last, so the row displays a server it does not point at.
+            markedSelected: [].slice.call(sel.options).filter(function(o){ return o.defaultSelected; }).length,
+            url: r.querySelector('.tab-url').textContent
+          };
+        }));
+      })()`));
+
+      expect(rows).toHaveLength(2);
+      for (const r of rows) {
+        expect(r.markedSelected).toBe(1);
+        expect(r.value).toBe('');
+        expect(r.shown).toBe('(choose a server)');
+        expect(r.url).toBe(''); // not the first server's host
+      }
+    } finally { await h.close(); }
+  });
+});
+
 test.describe('video adjustments', () => {
   test('layers persist outside cssOverrides and survive a Settings save', async () => {
     const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
@@ -415,6 +473,109 @@ test.describe('video colour panel', () => {
         expect.arrayContaining(['Show Session Tabs', 'Next Session', 'Alpha', 'Beta']));
       expect(tabs.filter(t => t.label === 'Show Session Tabs')[0].enabled).toBe(true);
       expect(tabs.filter(t => t.label === 'Next Session')[0].enabled).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  // Parenting the panel fixed it floating over other apps, but pinned it to the
+  // window it was OPENED from. The panel always adjusts whichever session is
+  // active, so once a second window came forward the panel sat behind the very
+  // session it was adjusting. It now follows focus.
+  test('the panel follows the session window that comes forward', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await withPanel(h);
+      await clickMenu(h.app, 'Beta'); // opens a second session window
+      await expect.poll(async () => (await windowsInfo(h.app)).filter(w => !w.url).length,
+        { timeout: 15000 }).toBe(2);
+
+      await expect.poll(() => h.app.evaluate(({ BrowserWindow }) => {
+        const p = BrowserWindow.getAllWindows().find(w => (w.webContents.getURL() || '').includes('color.html'));
+        const parent = p && p.getParentWindow();
+        return !!(parent && parent.getTitle().includes('Beta'));
+      }), { timeout: 15000 }).toBe(true);
+    } finally { await h.close(); }
+  });
+});
+
+test.describe('settings window', () => {
+  // A stress config: every list long enough to push the pane past its height.
+  const bigConfig = () => ({
+    servers: [...servers(), ...Array.from({ length: 6 }, (_, i) => ({
+      id: `x${i}`, name: `Server number ${i}`, host: `http://192.168.1.${100 + i}` }))],
+    cssOverrides: Array.from({ length: 8 }, (_, i) => ({
+      selector: `.rule-${i}`, css: 'display: none !important', enabled: true, scope: 'all' })),
+    blockedHotkeys: ['w', 'q', 't', 'n', 'h', 'm', 'Tab'].map(k => ({
+      key: k, meta: true, enabled: true, description: `Blocked ${k}` })),
+    tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
+            items: Array.from({ length: 6 }, (_, i) => ({ id: `i${i}`, serverId: `x${i}`, behavior: 'keep' })) },
+    openSessions: [{ serverId: 'a', show: false }]
+  });
+
+  // The window was 700x600 INCLUDING the title bar, so the page only ever had
+  // 568px — less than any of the four panes needed. The whole document scrolled,
+  // which put Save & Close below the fold on every tab.
+  test('Save stays reachable on every pane', async () => {
+    const h = await launchApp(bigConfig());
+    try {
+      await openSettings(h.app);
+      const panes = JSON.parse(await evalInWindow(h.app, 'settings.html', `(function(){
+        var panes=[].slice.call(document.querySelectorAll('.tab-content'));
+        var active=document.querySelector('.tab-content.active').id;
+        var row=document.querySelector('.button-row');
+        var tabbar=document.querySelector('.tabs');
+        var out={};
+        panes.forEach(function(p){
+          panes.forEach(function(q){ q.classList.toggle('active', q===p); });
+          var r=row.getBoundingClientRect(), t=tabbar.getBoundingClientRect();
+          out[p.id]={
+            saveVisible: r.bottom <= innerHeight + 1 && r.top >= 0,
+            tabBarVisible: t.top >= 0 && t.bottom <= innerHeight + 1,
+            bodyScrolls: document.body.scrollHeight > document.body.clientHeight + 1,
+            hClip: document.documentElement.scrollWidth > innerWidth + 1
+          };
+        });
+        panes.forEach(function(q){ q.classList.toggle('active', q.id===active); });
+        return JSON.stringify(out);
+      })()`));
+
+      for (const [id, m] of Object.entries(panes)) {
+        expect(m, `pane ${id}`).toEqual(
+          { saveVisible: true, tabBarVisible: true, bodyScrolls: false, hClip: false });
+      }
+    } finally { await h.close(); }
+  });
+
+  // Settings used to take getFocusedWindow() as its PARENT. Opening it while the
+  // colour panel was in front made it a child of that panel, so closing the panel
+  // destroyed the Settings window — and any unsaved edits with it.
+  test('closing the colour panel does not take the Settings window with it', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await clickMenu(h.app, 'Adjust Video Color…');
+      await expect.poll(async () => (await windowsInfo(h.app)).some(w => w.url.includes('color.html')),
+        { timeout: 15000 }).toBe(true);
+      // Focus the panel, then open Settings from it.
+      await h.app.evaluate(({ BrowserWindow }) => {
+        const c = BrowserWindow.getAllWindows().find(w => (w.webContents.getURL() || '').includes('color.html'));
+        if (c) c.focus();
+      });
+      await openSettings(h.app);
+
+      expect(await h.app.evaluate(({ BrowserWindow }) => {
+        const s = BrowserWindow.getAllWindows().find(w => (w.webContents.getURL() || '').includes('settings.html'));
+        const p = s && s.getParentWindow();
+        return p ? (p.webContents.getURL() || '') : null;
+      })).toBe(null);
+
+      await h.app.evaluate(({ BrowserWindow }) => {
+        const c = BrowserWindow.getAllWindows().find(w => (w.webContents.getURL() || '').includes('color.html'));
+        if (c) c.close();
+      });
+      await expect.poll(async () => (await windowsInfo(h.app)).some(w => w.url.includes('color.html')),
+        { timeout: 15000 }).toBe(false);
+
+      // Settings must still be standing.
+      expect((await windowsInfo(h.app)).some(w => w.url.includes('settings.html'))).toBe(true);
     } finally { await h.close(); }
   });
 });

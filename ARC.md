@@ -82,8 +82,30 @@ kvm/
     for the rest of the session — no Connections or Tabs, and a `Cmd+Q` bound to
     Quit instead of passing through to the remote. Bad rows are now skipped, and
     `createMenu()` falls back to a minimal menu rather than none.
+  - A server written by hand has no `id`, and ids are what every lookup keys on
+    (tab buttons, per-server CSS scope, per-server video layers, session
+    restore). With both sides `undefined`, `s.id === wanted` matched **every**
+    server. `getServers()` backfills missing/duplicate ids on read — as
+    `tabItems()` already did for tab buttons — and `getServerById()` refuses a
+    falsy id rather than returning the first server that lacks one.
 - **GUI:** Settings window via cmd+,
 - **Defaults:** Bundled in app, auto-created on first launch
+
+## Window Parenting
+
+macOS keeps a child window above its parent, including over a full-screen
+parent, and sinks it with the app when you switch away. That is why the colour
+panel is a child of a session window rather than always-on-top — but it makes
+`parent:` load-bearing, and getting it wrong is not cosmetic:
+
+| Window | Parent | Why |
+|---|---|---|
+| Colour panel | the **active** session window, re-parented on focus | it adjusts whichever session is in front, so it has to follow the front one |
+| Settings | **none** | a singleton editing global config. It was `getFocusedWindow()`, which made it a child of the colour panel when that panel was in front — and closing the panel then destroyed Settings along with any unsaved edits |
+
+`getFocusedWindow()` is the recurring trap here: Settings and the colour panel
+are windows *without* sessions, so anything that reaches for "the current
+window" must use `activeTabbedWin()` / `getActiveServerRec()` instead.
 
 ## Build
 ```bash

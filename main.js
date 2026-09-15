@@ -137,11 +137,34 @@ const overlayOwner = new Map();
 
 // ---- Config helpers ---------------------------------------------------------
 
+// Servers are addressed by id everywhere: tab buttons, per-server CSS scope,
+// per-server video layers, session restore. A hand-edited config.json — which
+// ARC.md documents as a supported way to add one — can leave the id out, and
+// then `s.id === undefined` matches EVERY server: a tab button resolves to the
+// wrong host, and Settings shows every dropdown pinned to the last server.
+// Backfill on read, the same way tabItems() does for tab buttons.
 function getServers() {
-  return store.get('servers') || [];
+  const list = Array.isArray(store.get('servers')) ? store.get('servers') : [];
+  const ids = list.map(s => s && s.id);
+  const needsFix = ids.some(id => !id) || new Set(ids).size !== ids.length;
+  if (!needsFix) return list;
+
+  const seen = new Set();
+  const fixed = list.map((raw, i) => {
+    const o = (raw && typeof raw === 'object') ? raw : {};
+    let id = safeId(o.id, `s${i}`);
+    while (seen.has(id)) id += '_';
+    seen.add(id);
+    return { ...o, id };
+  });
+  store.set('servers', fixed);
+  return fixed;
 }
 
+// A falsy id must never match: `find(s => s.id === undefined)` would return the
+// first server that happens to lack one.
 function getServerById(id) {
+  if (!id) return null;
   return getServers().find(s => s.id === id) || null;
 }
 
@@ -803,7 +826,13 @@ function openServerWindow(server) {
   win.on('focus', () => {
     if (win.__tab && win.__tab.activeId) lastActiveInstanceId = win.__tab.activeId;
     // Keep the colour panel pointed at the session the user is actually looking at
-    if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
+    if (colorWindow && !colorWindow.isDestroyed()) {
+      colorWindow.webContents.send('wb-reload');
+      // …and follow that window. The panel adjusts whichever session is active,
+      // so while parented to the window it was OPENED from it would sit behind
+      // the one it is actually adjusting as soon as a second window came forward.
+      if (colorWindow.getParentWindow() !== win) colorWindow.setParentWindow(win);
+    }
   });
 
   win.on('closed', () => {
@@ -885,10 +914,20 @@ function openSettings() {
   }
 
   settingsWindow = new BrowserWindow({
-    width: 700,
-    height: 600,
+    // Content size, not frame size — the title bar used to eat 32px of this and
+    // push the Save button below the fold. Tall enough for the Tabs pane, which
+    // is the tallest of the four.
+    useContentSize: true,
+    width: 780,
+    height: 720,
+    minWidth: 640,
+    minHeight: 480,
     title: `${APP_NAME} Settings`,
-    parent: BrowserWindow.getFocusedWindow() || undefined,
+    // Deliberately parentless. This used to be getFocusedWindow(), which made
+    // Settings a CHILD of whatever was in front — including the colour panel.
+    // Closing that panel then destroyed the Settings window along with any
+    // unsaved edits. Settings is a singleton editing global config; it belongs
+    // to no single window.
     modal: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
