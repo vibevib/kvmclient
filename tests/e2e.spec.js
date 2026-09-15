@@ -5,7 +5,7 @@ const path = require('path');
 const {
   startFakeKvm, launchApp, windowsInfo, sessionUrls,
   evalInView, evalInWindow, clickMenu, menuAccelerator, webContentsCount,
-  menuTopLevel, menuAccelerators
+  menuTopLevel, menuAccelerators, waitForMenuItem
 } = require('./helpers');
 
 let kvm;
@@ -352,6 +352,69 @@ test.describe('application menu', () => {
     try {
       // Cmd+R is blocked, so Reload Session must give the accelerator up.
       await expect.poll(() => menuAccelerator(h.app, 'Reload Session'), { timeout: 15000 }).toBe(null);
+    } finally { await h.close(); }
+  });
+});
+
+test.describe('video colour panel', () => {
+  const withPanel = async (h) => {
+    await clickMenu(h.app, 'Adjust Video Color…');
+    await expect.poll(async () => (await windowsInfo(h.app)).some(w => w.url.includes('color.html')),
+      { timeout: 15000 }).toBe(true);
+  };
+
+  const panelInfo = (app) => app.evaluate(({ BrowserWindow }) => {
+    const p = BrowserWindow.getAllWindows().find(w => (w.webContents.getURL() || '').includes('color.html'));
+    if (!p) return null;
+    return {
+      alwaysOnTop: p.isAlwaysOnTop(),
+      visibleOnAllWorkspaces: p.isVisibleOnAllWorkspaces(),
+      hasParent: !!p.getParentWindow()
+    };
+  });
+
+  // The panel used to be always-on-top at 'screen-saver' level and visible on all
+  // workspaces. It therefore floated above OTHER applications and followed you onto
+  // their Spaces: the panel sat on top looking like KVM was active, while the menu
+  // bar still belonged to whatever app was actually in front. As a child of the
+  // session window it stays above the session but sinks with the app.
+  test('the panel floats above its session, not above other applications', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await withPanel(h);
+      expect(await panelInfo(h.app)).toEqual({
+        alwaysOnTop: false, visibleOnAllWorkspaces: false, hasParent: true
+      });
+    } finally { await h.close(); }
+  });
+
+  // createMenu() built the Tabs menu from getFocusedWindow(). Focusing the panel —
+  // a window with no sessions — disabled every Tabs item and dropped the per-session
+  // entries, and it stayed that way while the panel held focus.
+  test('opening the panel does not empty the Tabs menu', async () => {
+    const h = await launchApp({
+      servers: servers(),
+      openSessions: [{ serverId: 'a', show: true }],
+      tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a', behavior: 'keep' },
+                      { id: 'i2', serverId: 'b', behavior: 'keep' }] }
+    });
+    try {
+      await waitForMenuItem(h.app, 'Show Session Tabs');
+      await withPanel(h);
+
+      const tabs = await h.app.evaluate(({ Menu }) => {
+        const m = Menu.getApplicationMenu();
+        const t = m.items.find(i => i.label === 'Tabs');
+        return t.submenu.items
+          .filter(i => i.type !== 'separator')
+          .map(i => ({ label: i.label, enabled: i.enabled }));
+      });
+      // Session entries survive, and the switching items stay usable.
+      expect(tabs.map(t => t.label)).toEqual(
+        expect.arrayContaining(['Show Session Tabs', 'Next Session', 'Alpha', 'Beta']));
+      expect(tabs.filter(t => t.label === 'Show Session Tabs')[0].enabled).toBe(true);
+      expect(tabs.filter(t => t.label === 'Next Session')[0].enabled).toBe(true);
     } finally { await h.close(); }
   });
 });

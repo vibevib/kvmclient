@@ -64,6 +64,8 @@ Open with **View → Adjust Video Color…** (⌥⌘C). Two sections:
 - **Global** — applies to every server (the base look).
 - **This server** — applies only to the current tab; it stacks on top of the global layer (gains and tone multiply, sharpen adds). `1.000` = no change (`Sharpen 0` = off).
 
+The panel is a child window of the session it was opened from, so it stays above that session (full-screen included) without floating over your other apps.
+
 White balance is a real per-channel gain (SVG `feComponentTransfer`), sharpen is an SVG `feConvolveMatrix` unsharp kernel — both applied to the detected video element. Every change previews live on the active tab and saves automatically (no Save button).
 
 ## CSS Overrides

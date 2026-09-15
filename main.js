@@ -739,7 +739,8 @@ function setStripShown(win, show) {
 }
 
 function toggleStripActive() {
-  const win = BrowserWindow.getFocusedWindow();
+  // Same reason as in buildMenuTemplate(): the colour panel may hold focus.
+  const win = activeTabbedWin();
   if (win && win.__tab) setStripShown(win, !win.__tab.show);
 }
 
@@ -965,7 +966,10 @@ function openColorAdjust() {
     fullscreenable: false,
     minimizable: false,
     maximizable: false,
-    alwaysOnTop: true,
+    // A child of the session window: macOS keeps a child above its parent — including
+    // when the parent is full-screen — and, unlike always-on-top, it sinks with the
+    // app when you switch to another application.
+    parent: target && !target.win.isDestroyed() ? target.win : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -974,13 +978,13 @@ function openColorAdjust() {
     }
   });
 
-  // Float above everything — including a full-screened video window. Without this,
-  // macOS opens the panel on a different Space (behind the full-screen video), so
-  // it looks like nothing happened.
-  colorWindow.setAlwaysOnTop(true, 'screen-saver');
-  if (process.platform === 'darwin') {
-    colorWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  }
+  // This used to be setAlwaysOnTop(true, 'screen-saver') plus
+  // setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }), to get the panel
+  // above a full-screened session. The side effect was that the panel floated above
+  // every OTHER application too and followed you onto their Spaces: you would see a
+  // KVM panel sitting on top, assume KVM was active, and find the menu bar still
+  // belonged to whatever app was actually in front. Parenting the window (above)
+  // gets it over the session without hijacking the rest of the desktop.
 
   // Place it over the target window's top-right corner so it's obvious
   if (target && !target.win.isDestroyed()) {
@@ -1105,7 +1109,12 @@ function buildMenuTemplate() {
 
   // Tabs are a trait of the focused window: show/hide the strip, switch between
   // the preset session buttons — all in that window.
-  const focusedWin = BrowserWindow.getFocusedWindow();
+  // The session window the menu acts on. Deliberately NOT getFocusedWindow():
+  // the colour panel and Settings are windows with no sessions, so focusing one
+  // used to disable the whole Tabs menu and drop every per-session entry until a
+  // session window was clicked again. activeTabbedWin() falls back to the last
+  // active session, which is the window these menu items should still target.
+  const focusedWin = activeTabbedWin();
   const winTab = focusedWin && focusedWin.__tab;
   const presetItems = getTabsConfig().items;
   const tabsSubmenu = [
