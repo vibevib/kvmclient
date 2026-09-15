@@ -120,6 +120,38 @@ npm install electron-builder --save-dev
 npx electron-builder --mac
 ```
 
+## Tab Settings
+
+Four settings are **one setting each for every tab**, stored on `tabs` in the
+config: `openNewInTabs`, `showStrip`, `behavior` (`keep`/`suspend`) and
+`position`. `tabs.items` is the list of predefined tabs — `{ id, serverId, label }`,
+where `label` is the short name shown on the tab and blank means "show the
+position instead".
+
+Two of these used to live somewhere narrower, and the change is migrated once at
+startup by `migrateTabSettings()`:
+
+- `behavior` was on every item. The shared value becomes `suspend` only if
+  **every** item asked for it, so a mixed config does not start suspending tabs
+  that were not suspending before.
+- Strip visibility was per window, persisted in each `openSessions` entry as
+  `show`. It becomes `showStrip`, true if any window had the strip up.
+- `enabled` and `showButtons` drove nothing and are dropped.
+
+`migrateTabSettings()` must run **after** `safeId`/`asStr`, which are `const`
+arrow functions — placing it earlier in the file puts those in the temporal dead
+zone and the app fails to start at all.
+
+`winTabEntries(win)` is the single source of tab order: every predefined item
+first (each claiming a matching session, adopting an item-less one if needed),
+then any remaining sessions in that window. That is what puts an ad-hoc tab after
+the predefined ones. The strip, the Tabs menu and `Ctrl+Tab` all index into it, so
+they can never disagree about what the tabs are.
+
+`activateEntryInWin` trusts that resolution rather than re-adopting: when it
+focuses a session for an item it stamps `session.itemId`, so a **second** tab for
+the same server opens its own session instead of adopting the first one again.
+
 ## Security Model
 
 The remote KVM UI is **untrusted content**. It is served over plain HTTP on the

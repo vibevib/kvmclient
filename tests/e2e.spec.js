@@ -76,7 +76,7 @@ test.describe('sessions', () => {
   test('a failing sub-frame does not tear down the session', async () => {
     const h = await launchApp({
       servers: [{ id: 'a', name: 'Alpha', host: kvm.url + '/bad-iframe' }],
-      openSessions: [{ serverId: 'a', show: false }]
+      openSessions: [{ serverId: 'a' }]
     });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
@@ -95,7 +95,7 @@ test.describe('sessions', () => {
   test('a real main-frame failure still shows the connect page', async () => {
     const h = await launchApp({
       servers: [{ id: 'a', name: 'Alpha', host: 'http://127.0.0.1:9' }],
-      openSessions: [{ serverId: 'a', show: false }]
+      openSessions: [{ serverId: 'a' }]
     });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 20000 })
@@ -106,7 +106,7 @@ test.describe('sessions', () => {
   test('closing a window tears down its session webContents', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }, { serverId: 'b', show: false }]
+      openSessions: [{ serverId: 'a' }, { serverId: 'b' }]
     });
     try {
       await expect.poll(async () => (await windowsInfo(h.app)).length, { timeout: 15000 }).toBe(2);
@@ -123,7 +123,7 @@ test.describe('sessions', () => {
   });
 
   test('previously open windows are restored on next launch', async () => {
-    const first = await launchApp({ servers: servers(), openSessions: [{ serverId: 'b', show: false }] });
+    const first = await launchApp({ servers: servers(), openSessions: [{ serverId: 'b' }] });
     let saved;
     try {
       await expect.poll(() => sessionUrls(first.app), { timeout: 15000 })
@@ -131,7 +131,7 @@ test.describe('sessions', () => {
       saved = first.readConfig();
     } finally { await first.close(); }
 
-    expect(saved.openSessions).toEqual([{ serverId: 'b', show: false }]);
+    expect(saved.openSessions).toEqual([{ serverId: 'b' }]);
   });
 });
 
@@ -139,12 +139,12 @@ test.describe('tab strip', () => {
   test('two buttons for the same server are independent sessions', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: true }],
+      openSessions: [{ serverId: 'a' }],
       tabs: {
-        position: 'right', overlay: true, showButtons: true, size: 76,
+        position: 'right', overlay: true, showStrip: true, size: 76,
         items: [
-          { id: 'i1', serverId: 'a', behavior: 'keep' },
-          { id: 'i2', serverId: 'a', behavior: 'keep' }
+          { id: 'i1', serverId: 'a' },
+          { id: 'i2', serverId: 'a' }
         ]
       }
     });
@@ -167,12 +167,12 @@ test.describe('tab strip', () => {
   test('strip state marks only the active button', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: true }],
+      openSessions: [{ serverId: 'a' }],
       tabs: {
-        position: 'right', overlay: true, showButtons: true, size: 76,
+        position: 'right', overlay: true, showStrip: true, size: 76,
         items: [
-          { id: 'i1', serverId: 'a', behavior: 'keep' },
-          { id: 'i2', serverId: 'b', behavior: 'keep' }
+          { id: 'i1', serverId: 'a' },
+          { id: 'i2', serverId: 'b' }
         ]
       }
     });
@@ -192,11 +192,147 @@ test.describe('tab strip', () => {
   });
 });
 
+// The tab settings that used to be per-tab or per-window are now one setting
+// each, shared by every tab.
+test.describe('tab settings', () => {
+  const stripState = (app) => evalInView(app, 'tabbar.html', 'window.tabbar.getState()');
+
+  const waitForStrip = async (h) => {
+    await expect.poll(async () => {
+      const w = (await windowsInfo(h.app))[0];
+      return !!w && w.views.some(u => u.includes('tabbar.html'));
+    }, { timeout: 15000 }).toBe(true);
+  };
+
+  const sessionWindows = async (h) => (await windowsInfo(h.app)).filter(w => !w.url).length;
+
+  test('a server opens as a tab on the current window by default', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
+    try {
+      await expect.poll(() => sessionWindows(h), { timeout: 15000 }).toBe(1);
+      await clickMenu(h.app, 'Beta');
+      // Two sessions, still one window.
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(2);
+      expect(await sessionWindows(h)).toBe(1);
+    } finally { await h.close(); }
+  });
+
+  test('turning that off gives each server its own window again', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      tabs: { openNewInTabs: false, position: 'right', overlay: true, showStrip: true, size: 76, items: [] }
+    });
+    try {
+      await expect.poll(() => sessionWindows(h), { timeout: 15000 }).toBe(1);
+      await clickMenu(h.app, 'Beta');
+      await expect.poll(() => sessionWindows(h), { timeout: 15000 }).toBe(2);
+    } finally { await h.close(); }
+  });
+
+  test('a tab shows its short name, or its position when it has none', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      tabs: { showStrip: true, position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a', label: '' },
+                      { id: 'i2', serverId: 'b', label: 'Web' }] }
+    });
+    try {
+      await waitForStrip(h);
+      const state = await stripState(h.app);
+      expect(state.tabs.map(t => t.label)).toEqual(['1', 'Web']);
+      // The server it points at stays available as the secondary line.
+      expect(state.tabs.map(t => t.title)).toEqual(['Alpha', 'Beta']);
+    } finally { await h.close(); }
+  });
+
+  test('a server opened later is added after the predefined tabs', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      tabs: { showStrip: true, position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a', label: 'One' }] }
+    });
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(1);
+
+      await clickMenu(h.app, 'Beta');
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(2);
+
+      const state = await stripState(h.app);
+      // The configured tab keeps slot 1; the ad-hoc one lands behind it and, having
+      // no name of its own, shows its position.
+      expect(state.tabs[0].label).toBe('One');
+      expect(state.tabs[1].label).toBe('2');
+      expect(state.tabs[1].title).toBe('Beta');
+    } finally { await h.close(); }
+  });
+
+  test('the shared suspend setting applies to every tab', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      tabs: { behavior: 'suspend', showStrip: true, position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a' }, { id: 'i2', serverId: 'b' }] }
+    });
+    try {
+      await waitForStrip(h);
+      await evalInView(h.app, 'tabbar.html', 'window.tabbar.switchTab(1)');
+      // Switching away suspends the tab we left, for every tab — no per-tab opt-in.
+      await expect.poll(async () => {
+        const s = await stripState(h.app);
+        return s.tabs[0].suspended;
+      }, { timeout: 15000 }).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  test('an old per-tab config migrates to the shared settings', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [],
+      // The shape before this change: behavior on each tab, no shared switches.
+      tabs: { enabled: false, showButtons: true, position: 'left', overlay: false, size: 90,
+              items: [{ id: 'i1', serverId: 'a', behavior: 'suspend' },
+                      { id: 'i2', serverId: 'b', behavior: 'suspend' }] }
+    });
+    try {
+      await expect.poll(() => h.readConfig().tabs && h.readConfig().tabs.behavior,
+        { timeout: 15000 }).toBe('suspend');
+      const tabs = h.readConfig().tabs;
+
+      // Every tab asked to suspend, so the shared setting does.
+      expect(tabs.behavior).toBe('suspend');
+      expect(tabs.openNewInTabs).toBe(true);
+      // Settings that still mean something are preserved.
+      expect(tabs.position).toBe('left');
+      expect(tabs.overlay).toBe(false);
+      expect(tabs.size).toBe(90);
+      // Per-tab behavior is gone; the tabs themselves survive, in order.
+      expect(tabs.items.map(i => i.serverId)).toEqual(['a', 'b']);
+      expect(tabs.items.every(i => i.behavior === undefined)).toBe(true);
+      expect(tabs.items.every(i => typeof i.label === 'string')).toBe(true);
+      // Dead settings are dropped rather than carried forever.
+      expect(tabs.enabled).toBeUndefined();
+      expect(tabs.showButtons).toBeUndefined();
+    } finally { await h.close(); }
+  });
+
+  test('a mixed old config does not start suspending tabs that were not', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [],
+      tabs: { position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a', behavior: 'suspend' },
+                      { id: 'i2', serverId: 'b', behavior: 'keep' }] }
+    });
+    try {
+      await expect.poll(() => h.readConfig().tabs && h.readConfig().tabs.behavior,
+        { timeout: 15000 }).toBe('keep');
+    } finally { await h.close(); }
+  });
+});
+
 test.describe('settings + css', () => {
   test('rapid CSS toggles settle on the final state', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       cssOverrides: [{ selector: '#marker', css: 'color: rgb(1, 2, 3)', enabled: true, scope: 'all' }]
     });
     const markerColor = () => evalInView(h.app, '127.0.0.1',
@@ -221,7 +357,7 @@ test.describe('settings + css', () => {
     const h = await launchApp({
       servers: servers(),
       openSessions: [],
-      tabs: { position: 'right', overlay: true, showButtons: true, size: 76, items: [{ id: 'i1', serverId: 'b', behavior: 'keep' }] }
+      tabs: { position: 'right', overlay: true, showStrip: true, size: 76, items: [{ id: 'i1', serverId: 'b' }] }
     });
     try {
       await openSettings(h.app);
@@ -250,8 +386,8 @@ test.describe('hand-edited config', () => {
   const noIds = () => ({
     servers: [{ name: 'Alpha', host: kvm.url }, { name: 'Beta', host: 'http://192.168.1.55' }],
     cssOverrides: [], blockedHotkeys: [],
-    tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
-            items: [{ behavior: 'keep' }, { behavior: 'suspend' }] }
+    tabs: { position: 'right', overlay: true, showStrip: true, size: 76,
+            items: [{}, {}] }
   });
 
   test('servers written without ids get stable, distinct ones', async () => {
@@ -292,7 +428,8 @@ test.describe('hand-edited config', () => {
         expect(r.markedSelected).toBe(1);
         expect(r.value).toBe('');
         expect(r.shown).toBe('(choose a server)');
-        expect(r.url).toBe(''); // not the first server's host
+        // Says so, rather than showing the first server's host.
+        expect(r.url).toBe('no server');
       }
     } finally { await h.close(); }
   });
@@ -300,7 +437,7 @@ test.describe('hand-edited config', () => {
 
 test.describe('video adjustments', () => {
   test('layers persist outside cssOverrides and survive a Settings save', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await openSettings(h.app);
 
@@ -324,7 +461,7 @@ test.describe('video adjustments', () => {
   test('a per-server layer stacks on the global one', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       video: { global: { r: 1.2, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 }, servers: {} }
     });
     try {
@@ -341,7 +478,7 @@ test.describe('video adjustments', () => {
   test('the filter lands on one element, not the wrapper and its canvas', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       video: { global: { r: 1.2, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 }, servers: {} }
     });
     try {
@@ -371,7 +508,7 @@ test.describe('application menu', () => {
     test(`a hotkey row with ${label} does not cost the app its menu`, async () => {
       const h = await launchApp({
         servers: servers(),
-        openSessions: [{ serverId: 'a', show: false }],
+        openSessions: [{ serverId: 'a' }],
         blockedHotkeys: [row, { key: 'w', meta: true, description: 'Close tab', enabled: true }]
       });
       try {
@@ -387,7 +524,7 @@ test.describe('application menu', () => {
   test('the menu never claims Cmd+Q, even when the hotkey config is broken', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       blockedHotkeys: [{ meta: true, description: 'broken', enabled: true }]
     });
     try {
@@ -401,7 +538,7 @@ test.describe('application menu', () => {
   test('a valid blocked hotkey is still honoured alongside a broken one', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       blockedHotkeys: [
         { meta: true, description: 'broken', enabled: true },
         { key: 'r', meta: true, description: 'Reload', enabled: true }
@@ -437,7 +574,7 @@ test.describe('video colour panel', () => {
   // bar still belonged to whatever app was actually in front. As a child of the
   // session window it stays above the session but sinks with the app.
   test('the panel floats above its session, not above other applications', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await withPanel(h);
       expect(await panelInfo(h.app)).toEqual({
@@ -452,13 +589,13 @@ test.describe('video colour panel', () => {
   test('opening the panel does not empty the Tabs menu', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: true }],
-      tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
-              items: [{ id: 'i1', serverId: 'a', behavior: 'keep' },
-                      { id: 'i2', serverId: 'b', behavior: 'keep' }] }
+      openSessions: [{ serverId: 'a' }],
+      tabs: { position: 'right', overlay: true, showStrip: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a' },
+                      { id: 'i2', serverId: 'b' }] }
     });
     try {
-      await waitForMenuItem(h.app, 'Show Session Tabs');
+      await waitForMenuItem(h.app, 'Show Tab Strip');
       await withPanel(h);
 
       const tabs = await h.app.evaluate(({ Menu }) => {
@@ -470,8 +607,8 @@ test.describe('video colour panel', () => {
       });
       // Session entries survive, and the switching items stay usable.
       expect(tabs.map(t => t.label)).toEqual(
-        expect.arrayContaining(['Show Session Tabs', 'Next Session', 'Alpha', 'Beta']));
-      expect(tabs.filter(t => t.label === 'Show Session Tabs')[0].enabled).toBe(true);
+        expect.arrayContaining(['Show Tab Strip', 'Next Session', '1. Alpha', '2. Beta']));
+      expect(tabs.filter(t => t.label === 'Show Tab Strip')[0].enabled).toBe(true);
       expect(tabs.filter(t => t.label === 'Next Session')[0].enabled).toBe(true);
     } finally { await h.close(); }
   });
@@ -481,7 +618,12 @@ test.describe('video colour panel', () => {
   // active, so once a second window came forward the panel sat behind the very
   // session it was adjusting. It now follows focus.
   test('the panel follows the session window that comes forward', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    // Explicitly one window per server: this test is about window z-order, and
+    // the default now puts a second server in a TAB of the same window.
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      tabs: { openNewInTabs: false, position: 'right', overlay: true, showStrip: true, size: 76, items: [] }
+    });
     try {
       await withPanel(h);
       await clickMenu(h.app, 'Beta'); // opens a second session window
@@ -506,9 +648,9 @@ test.describe('settings window', () => {
       selector: `.rule-${i}`, css: 'display: none !important', enabled: true, scope: 'all' })),
     blockedHotkeys: ['w', 'q', 't', 'n', 'h', 'm', 'Tab'].map(k => ({
       key: k, meta: true, enabled: true, description: `Blocked ${k}` })),
-    tabs: { position: 'right', overlay: true, showButtons: true, size: 76,
-            items: Array.from({ length: 6 }, (_, i) => ({ id: `i${i}`, serverId: `x${i}`, behavior: 'keep' })) },
-    openSessions: [{ serverId: 'a', show: false }]
+    tabs: { position: 'right', overlay: true, showStrip: true, size: 76,
+            items: Array.from({ length: 6 }, (_, i) => ({ id: `i${i}`, serverId: `x${i}` })) },
+    openSessions: [{ serverId: 'a' }]
   });
 
   // The window was 700x600 INCLUDING the title bar, so the page only ever had
@@ -549,7 +691,7 @@ test.describe('settings window', () => {
   // colour panel was in front made it a child of that panel, so closing the panel
   // destroyed the Settings window — and any unsaved edits with it.
   test('closing the colour panel does not take the Settings window with it', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await clickMenu(h.app, 'Adjust Video Color…');
       await expect.poll(async () => (await windowsInfo(h.app)).some(w => w.url.includes('color.html')),
@@ -582,7 +724,7 @@ test.describe('settings window', () => {
 
 test.describe('hardening', () => {
   test('a remote page cannot read the server list or redirect the session', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
         .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
@@ -605,7 +747,7 @@ test.describe('hardening', () => {
   test('the remote page cannot read local files', async () => {
     const secret = path.join(os.tmpdir(), `kvm-secret-${Date.now()}.txt`);
     fs.writeFileSync(secret, 'TOP_SECRET_VALUE');
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
         .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
@@ -629,7 +771,7 @@ test.describe('hardening', () => {
 
   test('the remote page cannot read cross-origin responses', async () => {
     const other = await startFakeKvm();
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
         .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
@@ -644,7 +786,7 @@ test.describe('hardening', () => {
   // internet. Navigation is confined to the device the session is connected to.
   test('the remote page cannot navigate the session off the device', async () => {
     const elsewhere = await startFakeKvm();
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
         .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
@@ -661,7 +803,7 @@ test.describe('hardening', () => {
   });
 
   test('the remote page cannot open popup windows', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
         .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
@@ -676,7 +818,7 @@ test.describe('hardening', () => {
   // Overrides are injected as `selector { css }`, so an unbalanced brace would let
   // one row restyle the whole remote page (and pull in a remote url()).
   test('a CSS override cannot break out of its own rule', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await openSettings(h.app);
       await evalInWindow(h.app, 'settings.html', `window.kvmAPI.saveConfig({ cssOverrides: [
@@ -693,7 +835,7 @@ test.describe('hardening', () => {
   // '__proto__' scope is inert (it retargets that object's prototype, creates no own
   // key, and does not survive JSON). Pin that down so it stays harmless.
   test('a video layer cannot be saved under a prototype-polluting scope', async () => {
-    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
     try {
       await openSettings(h.app);
       await evalInWindow(h.app, 'settings.html',
@@ -709,7 +851,7 @@ test.describe('hardening', () => {
   test('a blocked hotkey releases the matching menu accelerator', async () => {
     const h = await launchApp({
       servers: servers(),
-      openSessions: [{ serverId: 'a', show: false }],
+      openSessions: [{ serverId: 'a' }],
       blockedHotkeys: [{ key: 'm', meta: true, description: 'Minimize', enabled: true }]
     });
     try {
@@ -723,8 +865,8 @@ test.describe('hardening', () => {
   test('a server name with quotes does not break the tab strip markup', async () => {
     const h = await launchApp({
       servers: [{ id: 'a', name: 'Office "A" <b>', host: kvm.url }],
-      openSessions: [{ serverId: 'a', show: true }],
-      tabs: { position: 'right', overlay: true, showButtons: true, size: 76, items: [{ id: 'i1', serverId: 'a', behavior: 'keep' }] }
+      openSessions: [{ serverId: 'a' }],
+      tabs: { position: 'right', overlay: true, showStrip: true, size: 76, items: [{ id: 'i1', serverId: 'a' }] }
     });
     try {
       await expect.poll(

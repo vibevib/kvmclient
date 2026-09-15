@@ -79,12 +79,16 @@ const store = new Store({
     // Multi-session tabbed window: one window hosting several sessions, switched
     // via an edge-docked button strip (sits over the letterbox bars).
     tabs: {
-      enabled: false,          // open the tabbed window on startup (instead of separate sessions)
+      // These four are ONE setting each, shared by every tab — not per tab.
+      openNewInTabs: true,     // a server opens as a tab here, not in a new window
+      showStrip: true,         // the edge strip is visible on session windows
+      behavior: 'keep',        // what a tab does in the background: keep | suspend
       position: 'right',       // left | right | top | bottom
       overlay: true,           // true = strip floats over the content (letterbox); false = own area (shrinks video)
-      showButtons: true,
       size: 76,                // strip thickness in px
-      items: []                // [{ serverId, behavior: 'keep' | 'suspend' }]
+      // Predefined tabs, in the order they appear. `label` is the short name shown
+      // on the tab; blank means the tab just shows its position (1, 2, 3…).
+      items: []                // [{ id, serverId, label }]
     }
   }
 });
@@ -366,21 +370,59 @@ function sanitizeTabs(cfg) {
   const t = (cfg && typeof cfg === 'object') ? cfg : {};
   const size = Number(t.size);
   return {
-    enabled: !!t.enabled,
+    openNewInTabs: t.openNewInTabs !== false,
+    showStrip: t.showStrip !== false,
+    behavior: t.behavior === 'suspend' ? 'suspend' : 'keep',
     position: ['left', 'right', 'top', 'bottom'].includes(t.position) ? t.position : 'right',
     overlay: t.overlay !== false,
-    showButtons: t.showButtons !== false,
     size: Number.isFinite(size) ? Math.min(400, Math.max(8, size)) : 76,
     items: (Array.isArray(t.items) ? t.items : []).slice(0, 200).map((raw, i) => {
       const it = (raw && typeof raw === 'object') ? raw : {};
       return {
         id: safeId(it.id, `t${Date.now().toString(36)}-${i}`),
         serverId: safeId(it.serverId, ''),
-        behavior: it.behavior === 'suspend' ? 'suspend' : 'keep'
+        // Free text, not an id — it is only ever rendered as a tab's name.
+        label: asStr(it.label, 40).trim()
       };
     })
   };
 }
+
+// One-time migration: three tab settings used to be per-tab or per-window and are
+// now one setting each for every tab.
+//   - `behavior` lived on each button; the global value keeps 'suspend' only if
+//     every button asked for it, so nobody's tabs start suspending unexpectedly.
+//   - `show` lived on each restored window; if any had the strip up, keep it up.
+//   - `enabled`/`showButtons` drove nothing and are dropped.
+(function migrateTabSettings() {
+  if (store.get('tabsSettingsMigrated')) return;
+  const t = store.get('tabs') || {};
+  const items = Array.isArray(t.items) ? t.items : [];
+  const next = { ...t };
+
+  if (next.behavior === undefined) {
+    next.behavior = items.length && items.every(i => i && i.behavior === 'suspend')
+      ? 'suspend' : 'keep';
+  }
+  if (next.showStrip === undefined) {
+    const opened = store.get('openSessions');
+    next.showStrip = Array.isArray(opened) && opened.length
+      ? opened.some(e => e && e.show)
+      : true;
+  }
+  if (next.openNewInTabs === undefined) next.openNewInTabs = true;
+  delete next.enabled;
+  delete next.showButtons;
+  next.items = items.map(i => {
+    const o = { ...(i || {}) };
+    delete o.behavior;
+    if (typeof o.label !== 'string') o.label = '';
+    return o;
+  });
+
+  store.set('tabs', sanitizeTabs(next));
+  store.set('tabsSettingsMigrated', true);
+})();
 
 // Build the CSS for one server: enabled overrides scoped to "all" or this server.
 function buildCSS(serverId) {
@@ -546,7 +588,7 @@ function persistOpenSessions() {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.__tab) continue;
     const active = windows.get(w.__tab.activeId);
-    if (active && active.serverId) out.push({ serverId: active.serverId, show: !!w.__tab.show });
+    if (active && active.serverId) out.push({ serverId: active.serverId });
   }
   store.set('openSessions', out);
 }
@@ -662,18 +704,43 @@ function layoutWindow(win) {
   }
 }
 
-// Strip state = the PRESET session buttons + this window's connection status.
+// The tabs of one window, in strip order: every predefined tab first, in the
+// order they are configured, then anything else open here. A server opened
+// ad-hoc is a real tab too, it just has no saved slot — so it goes after the
+// predefined ones rather than shuffling them.
+function winTabEntries(win) {
+  const items = getTabsConfig().items;
+  const sessions = getWinSessions(win);
+  const claimed = new Set();
+
+  const entries = items.map(it => {
+    // Prefer the session opened FOR this button; otherwise adopt one already
+    // showing the same server, so a restored window fills its buttons.
+    const s = sessions.find(x => x.itemId === it.id && !claimed.has(x.id))
+      || sessions.find(x => !x.itemId && x.serverId === it.serverId && !claimed.has(x.id));
+    if (s) claimed.add(s.id);
+    return { item: it, session: s || null, serverId: it.serverId, label: it.label || '' };
+  });
+
+  for (const s of sessions) {
+    if (claimed.has(s.id)) continue;
+    entries.push({ item: null, session: s, serverId: s.serverId, label: '' });
+  }
+  return entries;
+}
+
+// Strip state = the tabs above + this window's connection status.
 function buildWinTabsState(win) {
   const cfg = getTabsConfig();
-  const sessions = getWinSessions(win);
   const activeId = win.__tab ? win.__tab.activeId : null;
-  const tabs = cfg.items.map((it, i) => {
-    const server = getServerById(it.serverId);
-    const s = sessions.find(x => x.itemId === it.id)
-      || sessions.find(x => !x.itemId && x.serverId === it.serverId);
+  const tabs = winTabEntries(win).map((e, i) => {
+    const server = getServerById(e.serverId) || (e.session && e.session.server);
+    const s = e.session;
     return {
       index: i,
-      label: server ? (server.name || server.host) : (it.serverId || '?'),
+      // The short name if one is set, otherwise just the tab's position.
+      label: e.label || String(i + 1),
+      title: server ? (server.name || server.host) : (e.serverId || 'Session'),
       active: !!(s && s.id === activeId),
       connected: !!(s && !s.suspended),
       suspended: !!(s && s.suspended)
@@ -689,34 +756,37 @@ function pushWinTabsState(win) {
   }
 }
 
-// Switch a window to the session for `serverId`: focus it if connected here, else
-// create + connect it. Suspends the outgoing session if its button is 'suspend'.
-function activateItemInWin(win, item) {
-  if (!win || win.isDestroyed() || !win.__tab || !item) return;
-  const server = getServerById(item.serverId);
-  if (!server) return;
+// Switch a window to one of its tabs: focus the session if it exists here, else
+// create + connect it. Suspends the outgoing session if the shared background
+// behavior says to.
+function activateEntryInWin(win, entry) {
+  if (!win || win.isDestroyed() || !win.__tab || !entry) return;
+  const item = entry.item;
+  const server = getServerById(entry.serverId)
+    || (entry.session && entry.session.server)
+    || null;
+  // An ad-hoc tab with no saved server can still be focused if it is already
+  // open; it just cannot be re-created from nothing.
+  if (!server && !entry.session) return;
   const t = win.__tab;
-  const sessions = getWinSessions(win);
-  // Keyed by button id; otherwise adopt the window's item-less first session
-  // when it already shows this server.
-  let sess = sessions.find(s => s.itemId === item.id);
-  if (!sess) {
-    const adopt = sessions.find(s => !s.itemId && s.serverId === item.serverId);
-    if (adopt) { adopt.itemId = item.id; sess = adopt; }
-  }
+  let sess = entry.session || null;
+  // winTabEntries already decided which session belongs to which tab, including
+  // adopting a restored item-less one. Make that stick, so the NEXT tab for the
+  // same server does not adopt it all over again instead of opening its own.
+  if (sess && item && !sess.itemId) sess.itemId = item.id;
   const cur = windows.get(t.activeId);
 
   if (cur && (!sess || cur.id !== sess.id) && cur.view && !cur.view.webContents.isDestroyed()
-      && itemBehavior(cur.itemId) === 'suspend') {
+      && backgroundBehavior() === 'suspend') {
     cur.suspended = true;
     try { cur.view.webContents.loadURL('about:blank'); } catch (e) {}
   }
 
   if (!sess) {
-    sess = createSession(win, server, item.id);
+    sess = createSession(win, server, item ? item.id : null);
     t.sessionIds.push(sess.id);
     win.contentView.addChildView(sess.view);
-  } else if (sess.suspended) {
+  } else if (sess.suspended && server) {
     sess.suspended = false;
     loadHostInView(sess, server.host);
   }
@@ -726,7 +796,7 @@ function activateItemInWin(win, item) {
   layoutWindow(win);
   if (t.overlay) win.contentView.addChildView(t.overlay);
   sess.view.webContents.focus();
-  win.setTitle(`${APP_NAME} — ${server.name || server.host}`);
+  if (server) win.setTitle(`${APP_NAME} — ${server.name || server.host}`);
   pushWinTabsState(win);
   createMenu();
   persistOpenSessions();
@@ -757,14 +827,17 @@ function setStripShown(win, show) {
   layoutWindow(win);
   if (t.overlay) win.contentView.addChildView(t.overlay);
   pushWinTabsState(win);
-  createMenu();
   persistOpenSessions();
 }
 
-function toggleStripActive() {
-  // Same reason as in buildMenuTemplate(): the colour panel may hold focus.
-  const win = activeTabbedWin();
-  if (win && win.__tab) setStripShown(win, !win.__tab.show);
+// The strip is one setting for the whole app, not a per-window toggle: set it
+// once and every session window follows.
+function setStripShownGlobally(show) {
+  store.set('tabs', sanitizeTabs({ ...getTabsConfig(), showStrip: !!show }));
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w.__tab) setStripShown(w, !!show);
+  }
+  createMenu();
 }
 
 // The window to act on for session commands (focused session window, or last active)
@@ -778,23 +851,45 @@ function activeTabbedWin() {
 function switchWinRelative(delta) {
   const win = activeTabbedWin();
   if (!win) return;
-  const items = getTabsConfig().items;
-  if (!items.length) return;
+  const entries = winTabEntries(win);
+  if (!entries.length) return;
   const cur = windows.get(win.__tab.activeId);
-  let idx = cur ? items.findIndex(it => it.id === cur.itemId) : -1;
-  if (idx < 0 && cur) idx = items.findIndex(it => it.serverId === cur.serverId);
-  idx = (idx + delta + items.length) % items.length;
-  activateItemInWin(win, items[idx]);
+  let idx = cur ? entries.findIndex(e => e.session && e.session.id === cur.id) : -1;
+  // Not on a tab yet: step onto the first one going forward, the last going back.
+  if (idx < 0) idx = delta > 0 ? -1 : 0;
+  idx = (idx + delta + entries.length) % entries.length;
+  activateEntryInWin(win, entries[idx]);
 }
 
 // Live-apply the shared tabs config (position/size/overlay/buttons) to every open
 // window's strip — no window is recreated.
 function applyTabsConfigLive() {
+  const show = getTabsConfig().showStrip;
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.__tab) continue;
+    // Visibility is part of the shared config now, so a settings change pushes
+    // it out here rather than each window remembering its own answer.
+    if (w.__tab.show !== show) setStripShown(w, show);
     layoutWindow(w);
     if (w.__tab.overlay) { w.contentView.addChildView(w.__tab.overlay); pushWinTabsState(w); }
   }
+}
+
+// Open a server the way the shared setting says to: as another tab on the window
+// you are already using, or in a window of its own. A tab opened this way has no
+// saved slot, so it lands after the predefined tabs (see winTabEntries).
+function openServer(server) {
+  if (!server) return openServerWindow(null);
+  const win = activeTabbedWin();
+  if (getTabsConfig().openNewInTabs && win && !win.isDestroyed() && win.__tab) {
+    const sess = createSession(win, server, null);
+    win.__tab.sessionIds.push(sess.id);
+    win.contentView.addChildView(sess.view);
+    activateEntryInWin(win, { item: null, session: sess, serverId: server.id, label: '' });
+    win.focus();
+    return win;
+  }
+  return openServerWindow(server);
 }
 
 // Open a window with a first session for `server` (or the splash if null).
@@ -1048,13 +1143,21 @@ function openColorAdjust() {
 function getTabsConfig() {
   const t = store.get('tabs') || {};
   return {
-    enabled: !!t.enabled,
+    openNewInTabs: t.openNewInTabs !== false,
+    showStrip: t.showStrip !== false,
+    behavior: t.behavior === 'suspend' ? 'suspend' : 'keep',
     position: ['left', 'right', 'top', 'bottom'].includes(t.position) ? t.position : 'right',
     overlay: t.overlay !== false,
-    showButtons: t.showButtons !== false,
     size: Number(t.size) > 0 ? Number(t.size) : 76,
     items: tabItems(t)
   };
+}
+
+// Write one field of the shared tabs config and apply it everywhere at once.
+function setTabsConfig(patch) {
+  store.set('tabs', sanitizeTabs({ ...getTabsConfig(), ...patch }));
+  applyTabsConfigLive();
+  createMenu();
 }
 
 let tabItemSeq = 0;
@@ -1066,16 +1169,16 @@ function tabItems(t) {
     items = items.map((it, i) => (it && it.id)
       ? it
       : { ...(it || {}), id: `t${Date.now().toString(36)}-${i}-${tabItemSeq++}` });
+    items = items.map(it => ({ ...it, label: typeof it.label === 'string' ? it.label : '' }));
     store.set('tabs', { ...t, items });
   }
   return items;
 }
 
-// A button's behavior, read live so changing it in Settings affects open sessions.
-function itemBehavior(itemId) {
-  if (!itemId) return 'keep';
-  const it = getTabsConfig().items.find(i => i.id === itemId);
-  return it && it.behavior === 'suspend' ? 'suspend' : 'keep';
+// What a tab does once it is in the background. One setting for every tab, read
+// live so changing it in Settings affects sessions that are already open.
+function backgroundBehavior() {
+  return getTabsConfig().behavior === 'suspend' ? 'suspend' : 'keep';
 }
 
 // Don't claim an accelerator the user asked to pass through to the remote session.
@@ -1137,7 +1240,8 @@ function buildMenuTemplate() {
   const connectionsSubmenu = servers.length
     ? servers.map(s => ({
         label: s.name || s.host,
-        click: () => openServerWindow(s) // each click opens a new window/instance
+        // A tab on the current window, or a new window — "Open Servers in Tabs".
+        click: () => openServer(s)
       }))
     : [{ label: 'No servers configured', enabled: false }];
 
@@ -1155,25 +1259,31 @@ function buildMenuTemplate() {
   // active session, which is the window these menu items should still target.
   const focusedWin = activeTabbedWin();
   const winTab = focusedWin && focusedWin.__tab;
-  const presetItems = getTabsConfig().items;
+  const tabsCfg = getTabsConfig();
+  const entries = focusedWin ? winTabEntries(focusedWin) : [];
   const tabsSubmenu = [
-    { label: 'Show Session Tabs', type: 'checkbox', checked: !!(winTab && winTab.show), enabled: !!winTab, click: () => toggleStripActive() },
+    // One setting for every window, so this is not a per-window checkbox any more.
+    { label: 'Show Tab Strip', type: 'checkbox', checked: tabsCfg.showStrip,
+      click: () => setStripShownGlobally(!tabsCfg.showStrip) },
+    { label: 'Open Servers in Tabs', type: 'checkbox', checked: tabsCfg.openNewInTabs,
+      click: () => setTabsConfig({ openNewInTabs: !tabsCfg.openNewInTabs }) },
+    { label: 'Suspend Background Tabs', type: 'checkbox', checked: tabsCfg.behavior === 'suspend',
+      click: () => setTabsConfig({ behavior: tabsCfg.behavior === 'suspend' ? 'keep' : 'suspend' }) },
     { type: 'separator' },
-    { label: 'Next Session', accelerator: 'Ctrl+Tab', enabled: !!winTab && presetItems.length > 1, click: () => switchWinRelative(1) },
-    { label: 'Previous Session', accelerator: 'Ctrl+Shift+Tab', enabled: !!winTab && presetItems.length > 1, click: () => switchWinRelative(-1) }
+    { label: 'Next Session', accelerator: 'Ctrl+Tab', enabled: entries.length > 1, click: () => switchWinRelative(1) },
+    { label: 'Previous Session', accelerator: 'Ctrl+Shift+Tab', enabled: entries.length > 1, click: () => switchWinRelative(-1) }
   ];
-  if (winTab && presetItems.length) {
+  if (winTab && entries.length) {
     tabsSubmenu.push({ type: 'separator' });
-    const sessions = getWinSessions(focusedWin);
-    presetItems.forEach((it) => {
-      const server = getServerById(it.serverId);
-      const sess = sessions.find(s => s.itemId === it.id)
-        || sessions.find(s => !s.itemId && s.serverId === it.serverId);
+    entries.forEach((e, i) => {
+      const server = getServerById(e.serverId) || (e.session && e.session.server);
+      const name = server ? (server.name || server.host) : (e.serverId || 'Session');
       tabsSubmenu.push({
-        label: server ? (server.name || server.host) : (it.serverId || '?'),
+        // Short name first when there is one, so the menu reads like the strip.
+        label: e.label ? `${e.label} — ${name}` : `${i + 1}. ${name}`,
         type: 'checkbox',
-        checked: !!(sess && sess.id === winTab.activeId),
-        click: () => activateItemInWin(focusedWin, it)
+        checked: !!(e.session && e.session.id === winTab.activeId),
+        click: () => activateEntryInWin(focusedWin, e)
       });
     });
   }
@@ -1355,16 +1465,16 @@ ipcMain.handle('tabs-get-state', (event) => {
 });
 ipcMain.handle('tabs-switch', (event, index) => {
   const win = overlayOwner.get(event.sender.id);
-  const it = getTabsConfig().items[index];
-  if (win && it) activateItemInWin(win, it);
+  if (!win || win.isDestroyed()) return true;
+  const entry = winTabEntries(win)[index];
+  if (entry) activateEntryInWin(win, entry);
   return true;
 });
 
 // Show the tab strip on the active session window (from the Settings button).
 ipcMain.handle('show-tabs-here', (event) => {
   if (!isTrustedSender(event)) return false;
-  const win = activeTabbedWin();
-  if (win) setStripShown(win, true);
+  setStripShownGlobally(true);
   return true;
 });
 
@@ -1453,7 +1563,7 @@ ipcMain.handle('open-servers', (event, ids) => {
       rec.win.setTitle(`${APP_NAME} — ${server.name || server.host}`);
       loadHostInView(rec, server.host);
     } else {
-      openServerWindow(server);
+      openServer(server);
     }
   });
   persistOpenSessions();
@@ -1529,9 +1639,10 @@ app.whenReady().then(() => {
     .map(e => (typeof e === 'string' ? { serverId: e, show: false } : e)) // migrate old shape
     .filter(e => e && getServerById(e.serverId));
   if (sessions.length) {
+    const showStrip = getTabsConfig().showStrip;
     sessions.forEach(e => {
       const win = openServerWindow(getServerById(e.serverId));
-      if (e.show) setStripShown(win, true);
+      if (showStrip) setStripShown(win, true);
     });
   } else {
     openServerWindow(null); // splash: connect.html (existing connections / create first)

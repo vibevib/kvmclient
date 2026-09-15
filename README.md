@@ -8,7 +8,7 @@ A macOS desktop wrapper around the [GL.iNet hardware KVM](https://www.gl-inet.co
 
 - **Multiple servers** — save any number of KVM hosts and open them from the **Connections** menu, each in its own window.
 - **Splash / connection picker** — on launch it reopens the windows you had open; if none, a splash screen lists your saved servers to pick from (or connect to an ad-hoc URL).
-- **Session tabs** — turn any window into a multi-session window with an edge-docked button strip (**Tabs → Show Session Tabs**). Click a button to connect/switch to that server *in the same window*; each tab can **keep** streaming in the background or **suspend** to save bandwidth.
+- **Session tabs** — one window, several sessions, switched from an edge-docked strip. Opening a server adds a tab by default; a tab can show a short name of your choosing, or just its position.
 - **Live video adjustments** — a floating panel (⌥⌘C) with **white balance** (per-channel R/G/B), **brightness / contrast / saturation**, and **sharpen**, in two layers: a **Global** layer for all servers and a **This server** layer for the current tab. Changes preview live and **save automatically**.
 - **CSS overrides** — inject arbitrary CSS into the remote UI, scoped **globally or per-server**, applied instantly.
 - **Hotkey blocking** — configurable list of macOS shortcuts that get passed through to the remote instead of acting on the host.
@@ -53,9 +53,26 @@ Add servers in **Settings → General** (name + host; a bare IP like `192.168.1.
 
 ## Session Tabs
 
-Configure the shared session strip in **Settings → Tabs**: pick the button **position** (left/right/top/bottom), whether it floats **over the content** (transparent, sits in the letterbox bars) or takes its **own space** (shrinks the video), its **size**, and the list of **session buttons** (a server + keep/suspend behavior).
+Configure them in **Settings → Tabs**. The first four settings are **one setting
+each, shared by every tab** — not something you set per tab:
 
-Then, on any window, **Tabs → Show Session Tabs** toggles the strip. Switching keeps every session view loaded and simply restacks them, so tabs swap instantly. `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle sessions.
+| Setting | Default | What it does |
+|---|---|---|
+| Open new servers in tabs | **on** | A server opens as a tab on the window you are using. Off: each one gets its own window. |
+| Show the tab strip | **on** | The strip is visible on every window. |
+| Suspend tabs in the background | **off** | Off, every tab keeps streaming. On, a backgrounded tab drops its stream to save bandwidth and reconnects when you switch back. |
+| Strip location | right | Which edge the strip sits on, whether it floats **over the content** (in the letterbox bars) or takes its **own space**, and how thick it is. |
+
+Below those is the list of **tabs**: a server, its URL (read-only), and an
+optional **short name**. Drag the ≡ handle to reorder — that order is the order
+they appear in the strip. A tab with no name shows its position instead, so an
+unnamed strip reads `1 2 3`.
+
+A server you open later is a tab too; it just has no saved slot, so it is added
+**after** the predefined ones rather than shuffling them.
+
+`Ctrl+Tab` / `Ctrl+Shift+Tab` cycle through them. Switching keeps every session
+loaded and simply restacks them, so tabs swap instantly.
 
 ## Video Adjustments
 

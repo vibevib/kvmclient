@@ -195,6 +195,37 @@
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       padding-left: 2px;
     }
+    /* One shared tab setting per row */
+    .opt-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .switch { display: flex; align-items: center; gap: 8px; color: #ddd; font-size: 13px;
+              font-weight: 500; margin: 0; cursor: pointer; }
+    .switch input[type="checkbox"] { width: 16px; height: 16px; accent-color: #007aff; margin: 0; }
+    .opt-hint { font-size: 11px; color: #666; }
+
+    /* Compact tab rows: grip | server | url (read only) | short name | delete */
+    .tab-grid { display: grid; grid-template-columns: 22px minmax(0, 1.1fr) minmax(0, 1.4fr) 116px 28px;
+                align-items: center; column-gap: 8px; }
+    .tab-head { display: grid; grid-template-columns: 22px minmax(0, 1.1fr) minmax(0, 1.4fr) 116px 28px;
+                column-gap: 8px; padding: 0 12px 4px; font-size: 10px; text-transform: uppercase;
+                letter-spacing: 0.5px; color: #666; }
+    .list-item.tab-item-row { padding: 6px 12px; }
+    .tab-item-row select, .tab-item-row .tab-name {
+      width: 100%; padding: 6px 8px; border: none; border-radius: 6px;
+      background: #252525; color: #e0e0e0; font-size: 12px; margin: 0;
+    }
+    .tab-item-row select { cursor: pointer; }
+    .tab-item-row select:hover, .tab-item-row .tab-name:hover { background: #2a2a2a; }
+    .tab-item-row .tab-url {
+      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 11px; color: #c3e88d;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 2px;
+    }
+    .tab-item-row .tab-url.unset { color: #666; font-style: italic; font-family: inherit; }
+    .grip { cursor: grab; color: #555; text-align: center; user-select: none; font-size: 14px; }
+    .grip:active { cursor: grabbing; }
+    .tab-item-row.dragging { opacity: 0.4; }
+    .tab-item-row.drop-before { box-shadow: inset 0 2px 0 #007aff; }
+    .tab-item-row.drop-after { box-shadow: inset 0 -2px 0 #007aff; }
+
     /* Server rows: name + host as aligned columns */
     .list-item.server-item {
       display: grid;
@@ -368,11 +399,34 @@
 
   <!-- Tabs Tab -->
   <div id="tabsview" class="tab-content">
-    <p style="font-size: 12px; color: #888; margin-top: 0;">Show a session-switcher strip on <strong style="color:#aaa;">any</strong> window (menu: <strong style="color:#aaa;">Tabs → Show Session Tabs</strong>, or the button below). Clicking a button connects that server, or switches to it — in the same window.</p>
+    <p style="font-size: 12px; color: #888; margin-top: 0;">Tabs let one window hold several sessions, switched from an edge strip. These settings apply to <strong style="color:#aaa;">every</strong> tab.</p>
 
+    <div class="opt-row">
+      <label class="switch">
+        <input type="checkbox" id="tabs-open-in-tabs">
+        <span>Open new servers in tabs</span>
+      </label>
+      <span class="opt-hint">Off: each server opens its own window.</span>
+    </div>
+    <div class="opt-row">
+      <label class="switch">
+        <input type="checkbox" id="tabs-show-strip">
+        <span>Show the tab strip</span>
+      </label>
+      <span class="opt-hint">Applies to every window.</span>
+    </div>
+    <div class="opt-row">
+      <label class="switch">
+        <input type="checkbox" id="tabs-suspend">
+        <span>Suspend tabs in the background</span>
+      </label>
+      <span class="opt-hint">Off: every tab keeps streaming. On saves bandwidth, and reconnects on the way back.</span>
+    </div>
+
+    <h2 style="margin-top: 18px;">Strip location</h2>
     <div class="tabs-opts">
       <div>
-        <label for="tabs-position">Strip position</label>
+        <label for="tabs-position">Position</label>
         <select id="tabs-position" class="field-select">
           <option value="right">Right edge</option>
           <option value="left">Left edge</option>
@@ -381,27 +435,26 @@
         </select>
       </div>
       <div>
-        <label for="tabs-overlay">Strip area</label>
+        <label for="tabs-overlay">Area</label>
         <select id="tabs-overlay" class="field-select">
           <option value="over">Over the content</option>
           <option value="own">Own space (shrinks video)</option>
         </select>
       </div>
       <div>
-        <label for="tabs-size">Strip size (px)</label>
+        <label for="tabs-size">Thickness (px)</label>
         <input type="number" id="tabs-size" min="40" max="240" step="2" style="width: 90px;">
       </div>
     </div>
 
-    <h2 style="margin-top: 20px;">Session buttons</h2>
+    <h2 style="margin-top: 20px;">Tabs</h2>
+    <div class="tab-head">
+      <span></span><span>Server</span><span>URL</span><span>Name on tab</span><span></span>
+    </div>
     <div class="list-container" id="tab-items-list"></div>
     <div class="add-form">
-      <button class="secondary" id="add-tab-item">Add session button</button>
-    </div>
-
-    <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px;">
-      <button class="primary" id="show-tabs-here">Show tabs on the active window</button>
-      <span style="font-size: 11px; color: #777;">Changes apply live to open strips.</span>
+      <button class="secondary" id="add-tab-item">Add tab</button>
+      <span class="opt-hint" style="align-self:center;">Drag ≡ to reorder. A blank name shows the tab's position instead. Servers opened later are added after these.</span>
     </div>
   </div>
 
@@ -494,13 +547,13 @@
       return s ? normalizeHost(s.host) : '';
     }
 
-    // Render the tabbed-window session buttons
+    // Render the tab list: grip, server, read-only URL, short name, delete.
     function renderTabItems() {
       const container = document.getElementById('tab-items-list');
       const items = (config.tabs && config.tabs.items) || [];
       const servers = config.servers || [];
       if (!items.length) {
-        container.innerHTML = '<div style="padding:14px;color:#666;font-size:12px;">No session buttons yet — add one below.</div>';
+        container.innerHTML = '<div style="padding:14px;color:#666;font-size:12px;">No tabs yet — add one below.</div>';
         return;
       }
       container.innerHTML = items.map((it, i) => {
@@ -512,21 +565,87 @@
           ? (resolved ? '' : '<option value="" selected>(choose a server)</option>') +
             servers.map(s => `<option value="${escapeHtml(s.id)}"${resolved && it.serverId === s.id ? ' selected' : ''}>${escapeHtml(s.name || s.host)}</option>`).join('')
           : '<option value="">(add a server first)</option>';
+        const url = serverHost(it.serverId);
         return `
-          <div class="list-item tab-item-row">
+          <div class="list-item tab-item-row tab-grid" draggable="true" data-index="${i}">
+            <span class="grip" title="Drag to reorder">&#8801;</span>
             <select class="tab-server" data-index="${i}" title="Server">${serverOpts}</select>
-            <select class="tab-behavior" data-index="${i}" title="When hidden">
-              <option value="keep" ${it.behavior !== 'suspend' ? 'selected' : ''}>Keep connected</option>
-              <option value="suspend" ${it.behavior === 'suspend' ? 'selected' : ''}>Suspend (save bandwidth)</option>
-            </select>
+            <div class="tab-url${url ? '' : ' unset'}" title="${escapeHtml(url || 'No server selected')}">${escapeHtml(url || 'no server')}</div>
+            <input class="tab-name" type="text" data-index="${i}" maxlength="40"
+                   placeholder="${i + 1}" value="${escapeHtml(it.label || '')}"
+                   title="Shown on the tab. Blank shows its position instead.">
             <button class="delete-btn" data-index="${i}" data-type="tab-item">&times;</button>
-            <div class="tab-url" title="URL this session will load">${escapeHtml(serverHost(it.serverId))}</div>
           </div>`;
       }).join('');
     }
 
+    // Drag to reorder. The order here is the order tabs appear in the strip, so
+    // moving a row moves the tab.
+    let dragFrom = null;
+
+    function tabRowFrom(e) {
+      const el = e.target.closest ? e.target.closest('.tab-item-row') : null;
+      return el && el.dataset.index !== undefined ? el : null;
+    }
+
+    function clearDropMarks() {
+      document.querySelectorAll('.tab-item-row').forEach(r =>
+        r.classList.remove('drop-before', 'drop-after', 'dragging'));
+    }
+
+    document.getElementById('tab-items-list').addEventListener('dragstart', (e) => {
+      const row = tabRowFrom(e);
+      if (!row) return;
+      dragFrom = parseInt(row.dataset.index, 10);
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox/Electron will not start a drag without payload.
+      try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch (err) {}
+    });
+
+    document.getElementById('tab-items-list').addEventListener('dragover', (e) => {
+      const row = tabRowFrom(e);
+      if (!row || dragFrom === null) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const r = row.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      document.querySelectorAll('.tab-item-row').forEach(x =>
+        x.classList.remove('drop-before', 'drop-after'));
+      row.classList.add(after ? 'drop-after' : 'drop-before');
+    });
+
+    document.getElementById('tab-items-list').addEventListener('drop', (e) => {
+      const row = tabRowFrom(e);
+      if (!row || dragFrom === null) { clearDropMarks(); return; }
+      e.preventDefault();
+      const r = row.getBoundingClientRect();
+      const after = (e.clientY - r.top) > r.height / 2;
+      let to = parseInt(row.dataset.index, 10) + (after ? 1 : 0);
+      const items = config.tabs.items;
+      const [moved] = items.splice(dragFrom, 1);
+      // Removing the row first shifts everything after it down by one.
+      if (dragFrom < to) to -= 1;
+      items.splice(Math.max(0, Math.min(items.length, to)), 0, moved);
+      dragFrom = null;
+      clearDropMarks();
+      renderTabItems();
+      applyTabsLive();
+    });
+
+    document.getElementById('tab-items-list').addEventListener('dragend', () => {
+      dragFrom = null;
+      clearDropMarks();
+    });
+
     function populateTabsControls() {
-      if (!config.tabs) config.tabs = { enabled: false, position: 'right', showButtons: true, size: 76, items: [] };
+      if (!config.tabs) {
+        config.tabs = { openNewInTabs: true, showStrip: true, behavior: 'keep',
+                        position: 'right', overlay: true, size: 76, items: [] };
+      }
+      document.getElementById('tabs-open-in-tabs').checked = config.tabs.openNewInTabs !== false;
+      document.getElementById('tabs-show-strip').checked = config.tabs.showStrip !== false;
+      document.getElementById('tabs-suspend').checked = config.tabs.behavior === 'suspend';
       document.getElementById('tabs-position').value = config.tabs.position || 'right';
       document.getElementById('tabs-overlay').value = config.tabs.overlay === false ? 'own' : 'over';
       document.getElementById('tabs-size').value = config.tabs.size || 76;
@@ -629,6 +748,17 @@
       if (window.kvmAPI.updateTabs) window.kvmAPI.updateTabs(config.tabs);
     }
 
+    // The three shared switches. Each is one setting for every tab.
+    document.getElementById('tabs-open-in-tabs').addEventListener('change', e => {
+      config.tabs.openNewInTabs = e.target.checked; applyTabsLive();
+    });
+    document.getElementById('tabs-show-strip').addEventListener('change', e => {
+      config.tabs.showStrip = e.target.checked; applyTabsLive();
+    });
+    document.getElementById('tabs-suspend').addEventListener('change', e => {
+      config.tabs.behavior = e.target.checked ? 'suspend' : 'keep'; applyTabsLive();
+    });
+
     document.getElementById('tabs-position').addEventListener('change', e => { config.tabs.position = e.target.value; applyTabsLive(); });
     document.getElementById('tabs-overlay').addEventListener('change', e => { config.tabs.overlay = e.target.value === 'over'; applyTabsLive(); });
     function commitSize(e) {
@@ -641,32 +771,43 @@
 
     document.getElementById('tab-items-list').addEventListener('change', (e) => {
       const i = parseInt(e.target.dataset.index);
+      if (!config.tabs.items[i]) return;
       if (e.target.classList.contains('tab-server')) {
         config.tabs.items[i].serverId = e.target.value;
         const row = e.target.closest('.tab-item-row');
         const urlEl = row && row.querySelector('.tab-url');
-        if (urlEl) urlEl.textContent = serverHost(e.target.value);
-      } else if (e.target.classList.contains('tab-behavior')) {
-        config.tabs.items[i].behavior = e.target.value;
+        if (urlEl) {
+          const url = serverHost(e.target.value);
+          urlEl.textContent = url || 'no server';
+          urlEl.classList.toggle('unset', !url);
+          urlEl.title = url || 'No server selected';
+        }
+        applyTabsLive();
       }
+    });
+
+    // Typing the short name updates the strip live, without re-rendering the row
+    // underneath the cursor.
+    document.getElementById('tab-items-list').addEventListener('input', (e) => {
+      if (!e.target.classList.contains('tab-name')) return;
+      const i = parseInt(e.target.dataset.index);
+      if (!config.tabs.items[i]) return;
+      config.tabs.items[i].label = e.target.value.slice(0, 40);
       applyTabsLive();
     });
 
     document.getElementById('add-tab-item').addEventListener('click', () => {
       const first = (config.servers[0] && config.servers[0].id) || '';
-      // Stable id: sessions are keyed by it, so two buttons for the same server
-      // are independent tabs rather than aliases.
+      // Stable id: sessions are keyed by it, so two tabs for the same server
+      // are independent sessions rather than aliases.
       const id = 't' + Date.now().toString(36) + Math.floor(Math.random() * 1000).toString(36);
-      config.tabs.items.push({ id, serverId: first, behavior: 'keep' });
+      config.tabs.items.push({ id, serverId: first, label: '' });
       renderTabItems();
       applyTabsLive();
     });
 
-    // Save config and show the tab strip on the active session window
-    document.getElementById('show-tabs-here').addEventListener('click', async () => {
-      await window.kvmAPI.saveConfig(config);
-      await window.kvmAPI.showTabsHere();
-    });
+    // The old "Show tabs on the active window" button is gone: strip visibility is
+    // one shared setting now, so the toggle above does that job for every window.
 
     document.addEventListener('click', (e) => {
       if (e.target.classList.contains('delete-btn')) {
