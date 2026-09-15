@@ -4,7 +4,8 @@ const os = require('os');
 const path = require('path');
 const {
   startFakeKvm, launchApp, windowsInfo, sessionUrls,
-  evalInView, evalInWindow, clickMenu, menuAccelerator, webContentsCount
+  evalInView, evalInWindow, clickMenu, menuAccelerator, webContentsCount,
+  menuTopLevel, menuAccelerators
 } = require('./helpers');
 
 let kvm;
@@ -293,6 +294,64 @@ test.describe('video adjustments', () => {
           'JSON.stringify({w: !!document.getElementById("video-wrapper").style.filter, c: !!document.getElementById("stream-canvas").style.filter})'),
         { timeout: 15000 }
       ).toBe(JSON.stringify({ w: true, c: false }));
+    } finally { await h.close(); }
+  });
+});
+
+test.describe('application menu', () => {
+  // One malformed row used to throw inside createMenu(), so setApplicationMenu()
+  // never ran and the app was left on Electron's DEFAULT menu for the rest of the
+  // session: no Connections, no Tabs, and a Cmd+Q bound to Quit. createMenu runs
+  // on every window focus, so it never recovered.
+  const brokenRows = [
+    ['a missing key', { meta: true, description: 'broken', enabled: true }],
+    ['a non-string key', { key: 5, meta: true, description: 'broken', enabled: true }],
+    ['a null row', null]
+  ];
+
+  for (const [label, row] of brokenRows) {
+    test(`a hotkey row with ${label} does not cost the app its menu`, async () => {
+      const h = await launchApp({
+        servers: servers(),
+        openSessions: [{ serverId: 'a', show: false }],
+        blockedHotkeys: [row, { key: 'w', meta: true, description: 'Close tab', enabled: true }]
+      });
+      try {
+        await expect.poll(() => menuTopLevel(h.app), { timeout: 15000 })
+          .toEqual(expect.arrayContaining(['Connections', 'Tabs']));
+      } finally { await h.close(); }
+    });
+  }
+
+  // Cmd+Q has to reach the remote machine, so the menu must not claim it — it
+  // quits on Cmd+` instead. Electron's default menu DOES bind Cmd+Q, which is
+  // what made the lost-menu bug quit the app out from under the user.
+  test('the menu never claims Cmd+Q, even when the hotkey config is broken', async () => {
+    const h = await launchApp({
+      servers: servers(),
+      openSessions: [{ serverId: 'a', show: false }],
+      blockedHotkeys: [{ meta: true, description: 'broken', enabled: true }]
+    });
+    try {
+      expect(await menuAccelerator(h.app, 'Quit KVM')).toBe('Cmd+`');
+      const accels = await menuAccelerators(h.app);
+      expect(accels.filter(a => /\+Q$/i.test(a))).toEqual([]);
+    } finally { await h.close(); }
+  });
+
+  // A valid blocked row must still take effect after the defensive read.
+  test('a valid blocked hotkey is still honoured alongside a broken one', async () => {
+    const h = await launchApp({
+      servers: servers(),
+      openSessions: [{ serverId: 'a', show: false }],
+      blockedHotkeys: [
+        { meta: true, description: 'broken', enabled: true },
+        { key: 'r', meta: true, description: 'Reload', enabled: true }
+      ]
+    });
+    try {
+      // Cmd+R is blocked, so Reload Session must give the accelerator up.
+      await expect.poll(() => menuAccelerator(h.app, 'Reload Session'), { timeout: 15000 }).toBe(null);
     } finally { await h.close(); }
   });
 });

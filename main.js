@@ -368,13 +368,25 @@ function buildCSS(serverId) {
     .join(' ');
 }
 
+// Stored hotkeys, read back defensively. One malformed row — a hand-edited
+// config.json, or anything written before these were validated — used to throw
+// inside isHotkeyBlocked, which aborted createMenu() before it could install the
+// menu. The app was then left on Electron's DEFAULT menu: no Connections, no
+// Tabs, and a Cmd+Q bound to Quit instead of passing through to the remote.
+function getBlockedHotkeys() {
+  const raw = store.get('blockedHotkeys');
+  return (Array.isArray(raw) ? raw : [])
+    .filter(h => h && typeof h.key === 'string' && h.key.length > 0);
+}
+
 // Check if a hotkey should be blocked from native handling
 function isHotkeyBlocked(input) {
-  const hotkeys = store.get('blockedHotkeys') || [];
-  return hotkeys.some(h =>
+  const want = String((input && input.key) || '').toLowerCase();
+  if (!want) return false;
+  return getBlockedHotkeys().some(h =>
     h.enabled &&
-    h.key.toLowerCase() === input.key.toLowerCase() &&
-    h.meta === input.meta
+    h.key.toLowerCase() === want &&
+    !!h.meta === !!input.meta
   );
 }
 
@@ -1031,7 +1043,52 @@ function accelUnlessBlocked(accelerator, key) {
 
 // ---- Application menu -------------------------------------------------------
 
+// The essentials, used only if building the real menu ever throws. It must stay
+// trivially safe to build — and must NOT bind Cmd+Q, which belongs to the remote
+// machine; quitting is Cmd+` here, as in the real menu.
+function fallbackMenuTemplate() {
+  return [
+    {
+      label: APP_NAME,
+      submenu: [
+        { label: `About ${APP_NAME}`, role: 'about' },
+        { type: 'separator' },
+        { label: 'Settings...', accelerator: 'Cmd+,', click: () => openSettings() },
+        { type: 'separator' },
+        {
+          label: `Quit ${APP_NAME}`,
+          accelerator: 'Cmd+`',
+          click: () => { app.isQuitting = true; app.quit(); }
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
+        { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
+      ]
+    }
+  ];
+}
+
+// Build and install the application menu. createMenu runs on every window focus,
+// so a throw in here does not just fail once — it leaves the app on Electron's
+// default menu for the rest of the session.
 function createMenu() {
+  try {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+  } catch (e) {
+    console.error(`[${APP_NAME}] could not build the application menu:`, e);
+    try {
+      Menu.setApplicationMenu(Menu.buildFromTemplate(fallbackMenuTemplate()));
+    } catch (e2) {
+      console.error(`[${APP_NAME}] fallback menu failed too:`, e2);
+    }
+  }
+}
+
+function buildMenuTemplate() {
   const servers = getServers();
 
   const connectionsSubmenu = servers.length
@@ -1158,8 +1215,7 @@ function createMenu() {
     }
   ];
 
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  return template;
 }
 
 // ---- IPC --------------------------------------------------------------------
@@ -1170,7 +1226,7 @@ ipcMain.handle('get-config', (event) => {
   return {
     servers: getServers(),
     cssOverrides: store.get('cssOverrides'),
-    blockedHotkeys: store.get('blockedHotkeys'),
+    blockedHotkeys: getBlockedHotkeys(),
     tabs: getTabsConfig(),
     // connect.html (running inside a session view) prefills this to retry the host.
     // The splash session has no server, hence the null guard.
@@ -1363,12 +1419,20 @@ app.on('before-quit', () => {
   app.isQuitting = true;
 });
 
-// macOS: prevent cmd+q / OS quit from quitting immediately
-app.on('will-quit', (event) => {
-  if (!app.isQuitting) {
-    event.preventDefault();
-  }
-});
+// There used to be a `will-quit` handler here that called preventDefault() unless
+// app.isQuitting — meant to stop Cmd+Q from killing a session. It never ran:
+// `before-quit` fires first and sets that flag on every quit path, so the guard
+// was dead code.
+//
+// It is gone rather than repaired, because repairing it is worse than the bug —
+// refusing quit requests also blocks the dock's Quit and system logout/shutdown,
+// and leaves the app killable only by force.
+//
+// Cmd+Q is passed to the remote machine the right way instead: the application
+// menu simply never binds it (Quit is on Cmd+`), so the key falls through to the
+// session. That only holds while the real menu is installed — which is why
+// createMenu() can no longer fail into Electron's default menu, whose Quit *is*
+// bound to Cmd+Q.
 
 // A KVM appliance's self-signed certificate is expected, so waive certificate
 // errors — but ONLY for a private-network host the user pointed this app at.

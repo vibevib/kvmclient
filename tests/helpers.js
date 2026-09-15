@@ -137,10 +137,29 @@ async function menuAccelerator(app, label) {
   return hit ? hit.accelerator : undefined;
 }
 
+// Top-level application-menu labels — null if no menu is installed at all.
+const menuTopLevel = (app) => app.evaluate(({ Menu }) => {
+  const m = Menu.getApplicationMenu();
+  return m ? m.items.map(i => i.label) : null;
+});
+
+// Every accelerator the application menu claims, roles included.
+const menuAccelerators = (app) => app.evaluate(({ Menu }) => {
+  const m = Menu.getApplicationMenu();
+  if (!m) return null;
+  const out = [];
+  for (const top of m.items) {
+    if (!top.submenu) continue;
+    for (const i of top.submenu.items) if (i.accelerator) out.push(i.accelerator);
+  }
+  return out;
+});
+
 const webContentsCount = (app) => app.evaluate(({ webContents }) => webContents.getAllWebContents().length);
 
 module.exports = {
   ROOT, startFakeKvm, launchApp,
   windowsInfo, sessionUrls, evalInView, evalInWindow,
-  clickMenu, menuAccelerator, waitForMenuItem, webContentsCount
+  clickMenu, menuAccelerator, waitForMenuItem, webContentsCount,
+  menuTopLevel, menuAccelerators
 };

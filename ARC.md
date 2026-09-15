@@ -77,6 +77,11 @@ kvm/
 
 ## Settings Access
 - **Quick:** Edit `~/Library/Application Support/KVM/config.json` directly (macOS)
+  - Hand-edited config is read defensively. A malformed `blockedHotkeys` row used
+    to throw inside `createMenu()`, leaving the app on Electron's **default** menu
+    for the rest of the session — no Connections or Tabs, and a `Cmd+Q` bound to
+    Quit instead of passing through to the remote. Bad rows are now skipped, and
+    `createMenu()` falls back to a minimal menu rather than none.
 - **GUI:** Settings window via cmd+,
 - **Defaults:** Bundled in app, auto-created on first launch
 

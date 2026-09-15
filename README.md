@@ -89,6 +89,10 @@ These macOS shortcuts are passed through to the remote instead of acting on the 
 
 `Cmd + W`, `Cmd + Q`, `Cmd + T`, `Cmd + N`, `Cmd + H`, `Cmd + M`, `Cmd + Tab`
 
+These work by the menu simply *not* claiming the shortcut, so the key falls
+through to the remote session — which is why the app quits on `Cmd + \`` rather
+than `Cmd + Q`.
+
 ## Security
 
 The KVM web UI is served over plain **HTTP on your LAN**, so anyone on that
