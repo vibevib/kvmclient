@@ -54,7 +54,27 @@
     button:disabled { background: #222; color: #555; cursor: not-allowed; }
     #reset { flex: 0 0 auto; background: none; color: #888; padding: 8px 12px; }
     #reset:hover { color: #ccc; background: #222; }
-    #status { height: 14px; font-size: 11px; color: #666; text-align: center; margin-top: 10px; transition: color 0.15s; }
+    .wb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .wb-btn {
+    flex: 1 1 0; padding: 7px 10px; border: none; border-radius: 7px;
+    background: #2a2a2a; color: #e0e0e0; font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .wb-btn:hover:not(:disabled) { background: #333; }
+  .wb-btn.primary { background: #0a5bd6; color: #fff; }
+  .wb-btn.primary:hover:not(:disabled) { background: #0a66ee; }
+  .wb-btn:disabled { opacity: 0.4; cursor: default; }
+  .wb-lbl { font-size: 11px; color: #888; }
+  .wb-sel {
+    flex: 1 1 auto; background: #252525; color: #ccc; border: none; border-radius: 6px;
+    font-size: 11px; padding: 5px 6px; cursor: pointer;
+  }
+  .wb-swatch {
+    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px;
+    border: 1px solid #333; background: #1a1a1a;
+  }
+  #wb-status { font-size: 11px; color: #666; min-height: 14px; line-height: 1.4; }
+  #wb-status.bad { color: #e0a458; }
+  #status { height: 14px; font-size: 11px; color: #666; text-align: center; margin-top: 10px; transition: color 0.15s; }
     #status.saved { color: #7ee787; }
   </style>
 </head>
@@ -70,6 +90,24 @@
   <div class="section" id="sec-server">
     <div class="sec-head"><span class="sec-title">This server</span><span class="sec-sub" id="server-sub">only this tab</span></div>
     <div class="rows" data-scope="server"></div>
+  </div>
+
+  <div class="section" id="sec-white">
+    <div class="sec-head"><span class="sec-title">White point</span><span class="sec-sub">set the gains from the picture</span></div>
+    <div class="wb-row">
+      <button id="wb-auto" class="wb-btn primary" title="Find the whitest-looking area on screen and neutralise it">Auto</button>
+      <button id="wb-pick" class="wb-btn" title="Click something on screen that should be white">Pick…</button>
+      <button id="wb-undo" class="wb-btn" disabled title="Put back what this replaced">Undo</button>
+    </div>
+    <div class="wb-row">
+      <span class="wb-lbl">Apply to</span>
+      <select id="wb-scope" class="wb-sel">
+        <option value="server">This server</option>
+        <option value="global">Global</option>
+      </select>
+      <span class="wb-swatch" id="wb-swatch"></span>
+    </div>
+    <div id="wb-status">Samples 5×5 pixels of the raw stream.</div>
   </div>
 
   <p class="hint">Global is the base for every server; the per-server layer stacks on top for the current tab only. 1.000 = no change (Sharpen 0 = off). Arrow keys nudge the boxes.</p>
@@ -167,7 +205,70 @@
       document.getElementById('server-sub').textContent = serverName ? `only “${serverName}”` : 'no active session';
       if (serverId) secServer.classList.remove('disabled');
       else secServer.classList.add('disabled');
+
+      // Without a server there is no per-server layer to write to.
+      const scopeSel = document.getElementById('wb-scope');
+      if (!serverId) scopeSel.value = 'global';
+      scopeSel.querySelector('option[value="server"]').disabled = !serverId;
+      refreshUndo();
     }
+
+    // ---- White point --------------------------------------------------------
+
+    const wbStatus = document.getElementById('wb-status');
+    const wbSwatch = document.getElementById('wb-swatch');
+
+    function setStatus(text, bad) {
+      wbStatus.textContent = text;
+      wbStatus.classList.toggle('bad', !!bad);
+    }
+
+    async function refreshUndo() {
+      try {
+        document.getElementById('wb-undo').disabled = !(await window.kvmAPI.canUndoWhiteBalance());
+      } catch (e) { /* main is busy; leave it as-is */ }
+    }
+
+    function describe(res) {
+      const s = res.sample;
+      wbSwatch.style.background = `rgb(${s.r},${s.g},${s.b})`;
+      const where = res.mode === 'auto' ? 'Auto' : 'Picked';
+      const gains = `R ${res.gains.r.toFixed(3)}  G ${res.gains.g.toFixed(3)}  B ${res.gains.b.toFixed(3)}`;
+      let note = `${where} rgb(${s.r}, ${s.g}, ${s.b}) → ${res.scope === 'server' ? 'this server' : 'global'}. ${gains}`;
+      let bad = false;
+      // Both of these mean "the numbers are a compromise", and the user should
+      // know before trusting them.
+      if (res.clipped) { note += '  ·  that area is blown out, so the result is a guess'; bad = true; }
+      if (res.clamped) { note += '  ·  hit the slider limits'; bad = true; }
+      setStatus(note, bad);
+    }
+
+    async function runWhite(mode) {
+      const buttons = ['wb-auto', 'wb-pick', 'wb-undo'].map(id => document.getElementById(id));
+      buttons.forEach(b => { b.disabled = true; });
+      setStatus(mode === 'auto' ? 'Looking for a white area…' : 'Click something white in the session…');
+      let res;
+      try {
+        res = await window.kvmAPI.whiteBalance(mode, document.getElementById('wb-scope').value);
+      } catch (e) {
+        res = { ok: false, reason: 'the app could not sample the video' };
+      }
+      buttons.forEach(b => { b.disabled = false; });
+
+      if (res && res.ok) { describe(res); await load(); }
+      else if (res && res.cancelled) setStatus('Cancelled.');
+      else setStatus(`Could not set a white point — ${(res && res.reason) || 'unknown error'}.`, true);
+      refreshUndo();
+    }
+
+    document.getElementById('wb-auto').addEventListener('click', () => runWhite('auto'));
+    document.getElementById('wb-pick').addEventListener('click', () => runWhite('point'));
+    document.getElementById('wb-undo').addEventListener('click', async () => {
+      const r = await window.kvmAPI.undoWhiteBalance();
+      setStatus(r && r.ok ? 'Put back.' : 'Nothing to undo.');
+      wbSwatch.style.background = '#1a1a1a';
+      await load();
+    });
 
     // Re-sync to whichever tab is active if it changes while the panel is open
     if (window.kvmAPI.onVideoWBReload) window.kvmAPI.onVideoWBReload(load);

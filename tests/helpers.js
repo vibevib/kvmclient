@@ -19,10 +19,42 @@ function startFakeKvm() {
     const badIframe = req.url.startsWith('/bad-iframe')
       ? '<iframe id="dead" src="http://127.0.0.1:9/nothing-here"></iframe>'
       : '';
+    // /novideo has no media element at all, for the "nothing to sample" path.
+    if (req.url.startsWith('/novideo')) {
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><html><body style="margin:0;background:#111">'
+            + '<div id="marker">kvm-ok</div><p>no stream here</p></body></html>');
+      return;
+    }
+    // The stream is painted from the query, so a test can put a known colour in
+    // front of the white-point sampler:
+    //   /tint?r=&g=&b=   the whole frame is that colour
+    //   /patch?r=&g=&b=  a dark frame with one light patch in it
+    const paint = `
+      var c=document.getElementById('stream-canvas'), x=c.getContext('2d');
+      var q=new URLSearchParams(location.search), p=location.pathname;
+      function col(dr,dg,db){
+        return 'rgb('+(q.get('r')||dr)+','+(q.get('g')||dg)+','+(q.get('b')||db)+')';
+      }
+      if (p.indexOf('/two') === 0) {
+        // A blown-out white block AND a dimmer, unclipped one that is slightly
+        // blue. The clipped block scores higher on brightness, so this tells
+        // apart "prefers bright" from "prefers measurable".
+        x.fillStyle='#101010'; x.fillRect(0,0,c.width,c.height);
+        x.fillStyle='rgb(255,255,255)'; x.fillRect(20,20,60,60);
+        x.fillStyle='rgb(190,195,230)'; x.fillRect(180,120,100,100);
+      } else if (p.indexOf('/patch') === 0) {
+        x.fillStyle='#101010'; x.fillRect(0,0,c.width,c.height);
+        x.fillStyle=col(220,224,255); x.fillRect(40,40,80,80);
+      } else if (p.indexOf('/tint') === 0) {
+        x.fillStyle=col(255,255,255); x.fillRect(0,0,c.width,c.height);
+      }
+      document.getElementById('marker').dataset.painted = '1';
+    `;
     res.writeHead(200, { 'Content-Type': 'text/html' });
     res.end(`<!doctype html><html><body style="margin:0;background:#111">
       <div id="video-wrapper"><canvas id="stream-canvas" width="320" height="240"></canvas></div>
-      <div id="marker">kvm-ok</div>${badIframe}</body></html>`);
+      <div id="marker">kvm-ok</div>${badIframe}<script>${paint}<\/script></body></html>`);
   });
   return new Promise(resolve => {
     server.listen(0, '127.0.0.1', () => {

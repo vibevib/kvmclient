@@ -152,6 +152,37 @@ they can never disagree about what the tabs are.
 focuses a session for an item it stamps `session.itemId`, so a **second** tab for
 the same server opens its own session instead of adopting the first one again.
 
+## White Point
+
+`sampleWhiteScript()` is injected into the session and reads the **raw** stream —
+`drawImage` of the media element gives the source pixels, not the filtered
+rendering. That is deliberate: it makes the gains absolute (`mean/channel`)
+instead of relative to whatever filter is already on the element, so there is
+nothing to unpick.
+
+It only ever samples a media element. A wrapper div has no pixels of its own, and
+`getImageData` throws on a tainted canvas — both come back as a reason string
+rather than a silent no-op.
+
+`auto` scans a downscaled copy in 4×4 blocks and scores each on *bright AND close
+to neutral*. It keeps **two** candidates: the best block that is not blown out,
+and the best block overall. A clipped block is worth less — past 255 the excess is
+gone, so the cast cannot be measured — but it is not worthless, and a picture that
+is genuinely too blue usually has blue pegged across its white areas. Refusing
+those outright failed on exactly the case the feature exists for, so the clean
+block wins when there is one and the clipped one is used, flagged, when there is
+not. The winning block is then re-read at full resolution.
+
+`point` maps a viewport coordinate back through `object-fit` before sampling, or
+a click on a letterboxed stream lands somewhere else entirely.
+
+`applyWhitePoint()` solves rather than sets. The layers multiply, so writing the
+server layer means `server = target / global` and writing global means
+`global = target / server`; either way the **effective** gains come out equal to
+the target. Only r/g/b move — tone is the user's.
+
+`lastWhitePoint` holds the one layer that was replaced, which is all Undo needs.
+
 ## Security Model
 
 The remote KVM UI is **untrusted content**. It is served over plain HTTP on the

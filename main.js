@@ -1220,6 +1220,306 @@ function openColorAdjust() {
   });
 }
 
+// ---- White point ------------------------------------------------------------
+
+// The slider ranges the colour panel offers. A computed correction is pinned to
+// these so the result is always something the user can see and then nudge.
+const WB_LIMITS = {
+  r: [0.5, 1.5], g: [0.5, 1.5], b: [0.5, 1.5],
+  brightness: [0.5, 1.5], contrast: [0.5, 1.5], saturate: [0, 2], sharpen: [0, 1.5]
+};
+
+function clampWB(params) {
+  const out = {};
+  let clamped = false;
+  for (const k of WB_KEYS) {
+    const [lo, hi] = WB_LIMITS[k];
+    const n = Number(params[k]);
+    const v = Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : WB_IDENTITY[k];
+    if (Number.isFinite(n) && v !== n) clamped = true;
+    out[k] = v;
+  }
+  return { params: out, clamped };
+}
+
+// Sample the stream's RAW pixels — what the KVM sent, before our correction.
+// Working from the raw image is what keeps the maths honest: if a patch that
+// ought to be white reads (r,g,b), the gains that neutralise it are k/r, k/g,
+// k/b, with no need to unpick whatever filter is already on the element.
+//
+//   auto  — scan the frame for the block that most looks like it should be white
+//   point — average a box around one viewport coordinate the user clicked
+function sampleWhiteScript(opts) {
+  const o = JSON.stringify(Object.assign({ mode: 'auto', x: 0, y: 0, size: 5 }, opts || {}));
+  return `(function(){
+    var O = ${o};
+    function docs(){var d=[document];try{document.querySelectorAll('iframe').forEach(function(f){
+      try{if(f.contentDocument)d.push(f.contentDocument);}catch(e){}});}catch(e){}return d;}
+
+    // The stream is the largest media element. A wrapper div has no pixels of
+    // its own, so it cannot be sampled.
+    var best=null, area=0;
+    docs().forEach(function(d){try{
+      d.querySelectorAll('video,canvas,img').forEach(function(e){
+        var r=e.getBoundingClientRect(); var a=r.width*r.height;
+        if(a>area){area=a;best=e;}
+      });
+    }catch(e){}});
+    if(!best) return JSON.stringify({ok:false,reason:'no video element on this page'});
+
+    var rect=best.getBoundingClientRect();
+    var nw=best.videoWidth||best.naturalWidth||best.width||Math.round(rect.width);
+    var nh=best.videoHeight||best.naturalHeight||best.height||Math.round(rect.height);
+    if(!(nw>0&&nh>0&&rect.width>2&&rect.height>2))
+      return JSON.stringify({ok:false,reason:'the video has no size yet'});
+
+    // Where the source actually lands inside the element's box. object-fit
+    // letterboxes it, and a click has to map through that or it lands elsewhere.
+    function contentBox(){
+      var fit='fill';
+      try{fit=getComputedStyle(best).objectFit||'fill';}catch(e){}
+      var sx=rect.width/nw, sy=rect.height/nh, s;
+      if(fit==='contain'){s=Math.min(sx,sy);}
+      else if(fit==='cover'){s=Math.max(sx,sy);}
+      else if(fit==='none'){s=1;}
+      else if(fit==='scale-down'){s=Math.min(1,Math.min(sx,sy));}
+      else {return {ox:0,oy:0,ow:rect.width,oh:rect.height};}
+      var ow=nw*s, oh=nh*s;
+      return {ox:(rect.width-ow)/2, oy:(rect.height-oh)/2, ow:ow, oh:oh};
+    }
+
+    function avgBox(sx,sy,sw,sh){
+      sw=Math.max(1,Math.round(sw)); sh=Math.max(1,Math.round(sh));
+      sx=Math.max(0,Math.min(nw-sw,Math.round(sx)));
+      sy=Math.max(0,Math.min(nh-sh,Math.round(sy)));
+      var c=document.createElement('canvas'); c.width=sw; c.height=sh;
+      var x=c.getContext('2d',{willReadFrequently:true});
+      x.drawImage(best,sx,sy,sw,sh,0,0,sw,sh);
+      var d=x.getImageData(0,0,sw,sh).data;
+      var r=0,g=0,b=0,n=0,clip=0;
+      for(var i=0;i<d.length;i+=4){
+        r+=d[i];g+=d[i+1];b+=d[i+2];n++;
+        if(d[i]>=250||d[i+1]>=250||d[i+2]>=250)clip++;
+      }
+      return {r:r/n,g:g/n,b:b/n,px:n,clipped:clip/n};
+    }
+
+    try {
+      if(O.mode==='point'){
+        var cb=contentBox();
+        var px=(O.x-rect.left-cb.ox)/cb.ow*nw;
+        var py=(O.y-rect.top -cb.oy)/cb.oh*nh;
+        if(!(px>=0&&py>=0&&px<nw&&py<nh))
+          return JSON.stringify({ok:false,reason:'that point is outside the video'});
+        var sz=Math.max(1,O.size|0);
+        var a=avgBox(px-sz/2,py-sz/2,sz,sz);
+        a.ok=true; a.mode='point'; a.sourceX=Math.round(px); a.sourceY=Math.round(py);
+        return JSON.stringify(a);
+      }
+
+      // auto: scan a downscaled copy for the block that most looks like white.
+      var cap=320, sc=Math.min(1,cap/Math.max(nw,nh));
+      var w=Math.max(8,Math.round(nw*sc)), h=Math.max(8,Math.round(nh*sc));
+      var c=document.createElement('canvas'); c.width=w; c.height=h;
+      var x=c.getContext('2d',{willReadFrequently:true});
+      x.drawImage(best,0,0,w,h);
+      var d=x.getImageData(0,0,w,h).data;
+      // Two candidates, because a clipped block is worth less but is not
+      // worthless. A screen that is too blue very often HAS blue pegged at 255
+      // in its white areas — refusing those outright would fail on exactly the
+      // picture the feature exists for. So: prefer a block that is not blown
+      // out, and fall back to the best blown-out one, flagged, if there is none.
+      var B=4, clean={score:-1,col:null}, any={score:-1,col:null};
+      for(var yy=0; yy+B<=h; yy+=B){
+        for(var xx=0; xx+B<=w; xx+=B){
+          var r=0,g=0,bl=0,n=0,clip=0;
+          for(var j=0;j<B;j++)for(var i2=0;i2<B;i2++){
+            var k=((yy+j)*w+(xx+i2))*4;
+            r+=d[k];g+=d[k+1];bl+=d[k+2];n++;
+            if(d[k]>=250||d[k+1]>=250||d[k+2]>=250)clip++;
+          }
+          r/=n;g/=n;bl/=n;
+          var mx=Math.max(r,g,bl), mn=Math.min(r,g,bl);
+          if(mx<40) continue;                        // too dark to tell anything
+          var sat=mx>0?(mx-mn)/mx:1;
+          var score=(mx/255)*Math.pow(1-sat,2);      // bright AND close to neutral
+          var cand={score:score,x:xx,y:yy,col:{r:r,g:g,b:bl}};
+          if(score>any.score) any=cand;
+          if(clip/n<=0.25 && score>clean.score) clean=cand;
+        }
+      }
+      var pick = clean.col ? clean : any;
+      if(!pick.col) return JSON.stringify({ok:false,reason:'no usable light area on screen'});
+      // Re-read that block at full resolution, so the answer is not the
+      // downscale's averaging.
+      var fx=(pick.x+B/2)/w*nw, fy=(pick.y+B/2)/h*nh;
+      var a2=avgBox(fx-O.size/2, fy-O.size/2, O.size, O.size);
+      a2.ok=true; a2.mode='auto'; a2.sourceX=Math.round(fx); a2.sourceY=Math.round(fy);
+      return JSON.stringify(a2);
+    } catch(e) {
+      // A cross-origin or protected frame taints the canvas and getImageData throws.
+      return JSON.stringify({ok:false,reason:'could not read the video pixels ('+e.name+')'});
+    }
+  })();`;
+}
+
+// A crosshair over the session, resolving with the point the user clicked.
+// Injected into the remote page because that page is the only place that knows
+// where its own video actually is on screen.
+function pickOverlayScript() {
+  return `(function(){
+    return new Promise(function(resolve){
+      var old=document.getElementById('__lekvm_pick'); if(old) old.remove();
+      var host=document.createElement('div');
+      host.id='__lekvm_pick';
+      host.setAttribute('style','position:fixed;inset:0;z-index:2147483647;cursor:crosshair');
+      var tip=document.createElement('div');
+      tip.setAttribute('style','position:fixed;left:50%;top:18px;transform:translateX(-50%);'
+        +'font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#fff;'
+        +'background:rgba(18,18,18,0.92);padding:8px 14px;border-radius:8px;'
+        +'pointer-events:none;box-shadow:0 2px 14px rgba(0,0,0,0.5)');
+      tip.textContent='Click something that should be white   ·   Esc to cancel';
+      var ring=document.createElement('div');
+      ring.setAttribute('style','position:fixed;width:19px;height:19px;margin:-10px 0 0 -10px;'
+        +'border:1px solid #fff;pointer-events:none;display:none;'
+        +'box-shadow:0 0 0 1px rgba(0,0,0,0.7),inset 0 0 0 1px rgba(0,0,0,0.7)');
+      host.appendChild(tip); host.appendChild(ring);
+
+      var timer=null;
+      function done(v){
+        if(timer) clearTimeout(timer);
+        try{host.remove();}catch(e){}
+        window.removeEventListener('keydown',onKey,true);
+        resolve(JSON.stringify(v));
+      }
+      function onKey(e){ if(e.key==='Escape'){ e.preventDefault(); e.stopPropagation(); done({cancelled:true}); } }
+      host.addEventListener('mousemove',function(e){
+        ring.style.display='block'; ring.style.left=e.clientX+'px'; ring.style.top=e.clientY+'px';
+      });
+      host.addEventListener('click',function(e){
+        e.preventDefault(); e.stopPropagation(); done({x:e.clientX,y:e.clientY});
+      },true);
+      host.addEventListener('contextmenu',function(e){ e.preventDefault(); done({cancelled:true}); });
+      window.addEventListener('keydown',onKey,true);
+      (document.body||document.documentElement).appendChild(host);
+      // Never leave the caller waiting forever if the session is switched away.
+      timer=setTimeout(function(){ done({cancelled:true,timedOut:true}); }, 60000);
+    });
+  })();`;
+}
+
+// The gains that neutralise a sampled colour, keeping overall brightness put.
+function gainsForSample(sample) {
+  const r = Math.max(1, Number(sample.r) || 0);
+  const g = Math.max(1, Number(sample.g) || 0);
+  const b = Math.max(1, Number(sample.b) || 0);
+  const k = (r + g + b) / 3;
+  return { r: k / r, g: k / g, b: k / b };
+}
+
+// Write one layer of the video config and re-apply it everywhere.
+function persistWB(scopeKey, params) {
+  const base = scopeKey === 'all' ? VIDEO_WB_DEFAULT : WB_IDENTITY;
+  const p = sanitizeWB(params, base);
+  const video = store.get('video') || { global: { ...VIDEO_WB_DEFAULT }, servers: {} };
+  video.servers = video.servers || {};
+  if (scopeKey === 'all') {
+    video.global = p;
+  } else if (WB_KEYS.every(k => p[k] === WB_IDENTITY[k])) {
+    delete video.servers[scopeKey];
+  } else {
+    video.servers[scopeKey] = p;
+  }
+  store.set('video', video);
+  applyVideoFilterAll();
+  return p;
+}
+
+// The last white-point application, so it can be taken back in one step.
+let lastWhitePoint = null;
+
+// Turn a sample into a correction and store it.
+//
+// The two layers multiply, so whichever one is being written has to be solved
+// for rather than simply set: the EFFECTIVE gains are what must come out equal
+// to the target.
+function applyWhitePoint(rec, sample, scope) {
+  const target = gainsForSample(sample);
+  const useServer = scope !== 'global' && !!rec.serverId;
+  const scopeKey = useServer ? rec.serverId : 'all';
+  const other = useServer ? globalWB() : serverWB(rec.serverId);
+  const before = useServer ? serverWB(rec.serverId) : globalWB();
+
+  const wanted = {
+    ...before,
+    r: target.r / (other.r || 1),
+    g: target.g / (other.g || 1),
+    b: target.b / (other.b || 1)
+  };
+  const { params, clamped } = clampWB(wanted);
+  const saved = persistWB(scopeKey, params);
+
+  lastWhitePoint = { scopeKey, before: { ...before } };
+  createMenu();   // the Undo item is enabled off this
+  return {
+    ok: true,
+    scope: useServer ? 'server' : 'global',
+    scopeName: useServer ? (rec.server && (rec.server.name || rec.server.host)) : 'Global',
+    sample: { r: Math.round(sample.r), g: Math.round(sample.g), b: Math.round(sample.b) },
+    gains: { r: saved.r, g: saved.g, b: saved.b },
+    clipped: sample.clipped > 0.25,
+    clamped,
+    mode: sample.mode
+  };
+}
+
+// Put back whatever the last white-point application replaced.
+function undoWhitePoint() {
+  if (!lastWhitePoint) return { ok: false, reason: 'nothing to undo' };
+  persistWB(lastWhitePoint.scopeKey, lastWhitePoint.before);
+  lastWhitePoint = null;
+  createMenu();
+  return { ok: true };
+}
+
+// Sample the session in front and correct its white balance. `mode` is 'auto'
+// (find the whitest-looking area) or 'point' (let the user click one).
+async function whiteBalance(mode, scope) {
+  const rec = getActiveServerRec();
+  if (!rec || !rec.view || rec.view.webContents.isDestroyed()) {
+    return { ok: false, reason: 'no session in front' };
+  }
+  const wc = rec.view.webContents;
+
+  let opts = { mode: 'auto', size: 5 };
+  if (mode === 'point') {
+    // The panel usually has focus when this is started. Bring the session
+    // forward first, or the user's first click is spent focusing the window.
+    if (rec.win && !rec.win.isDestroyed()) { rec.win.focus(); wc.focus(); }
+    let picked;
+    try {
+      picked = JSON.parse(await wc.executeJavaScript(pickOverlayScript(), true));
+    } catch (e) {
+      return { ok: false, reason: 'could not open the picker' };
+    }
+    if (!picked || picked.cancelled) return { ok: false, cancelled: true };
+    opts = { mode: 'point', x: picked.x, y: picked.y, size: 5 };
+  }
+
+  let sample;
+  try {
+    sample = JSON.parse(await wc.executeJavaScript(sampleWhiteScript(opts), true));
+  } catch (e) {
+    return { ok: false, reason: 'could not sample the video' };
+  }
+  if (!sample || !sample.ok) return { ok: false, reason: (sample && sample.reason) || 'sampling failed' };
+
+  const result = applyWhitePoint(rec, sample, scope);
+  // The panel shows these numbers, so pull it back into step.
+  if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
+  return result;
+}
+
 // ---- Tabbed (multi-session) window ------------------------------------------
 
 function getTabsConfig() {
@@ -1429,6 +1729,22 @@ function buildMenuTemplate() {
           accelerator: 'Alt+Cmd+C',
           click: () => openColorAdjust()
         },
+        {
+          // Alt+Cmd+W, not Cmd+W — the plain chord belongs to the remote machine.
+          label: 'Auto White Balance',
+          accelerator: 'Alt+Cmd+W',
+          click: () => whiteBalance('auto')
+        },
+        {
+          label: 'Pick White Point…',
+          accelerator: 'Shift+Alt+Cmd+W',
+          click: () => whiteBalance('point')
+        },
+        {
+          label: 'Undo White Balance',
+          enabled: !!lastWhitePoint,
+          click: () => undoWhitePoint()
+        },
         { type: 'separator' },
         { label: 'Toggle DevTools', accelerator: 'Alt+Cmd+I', click: () => toggleDevToolsForActive() }
       ]
@@ -1628,20 +1944,26 @@ ipcMain.handle('save-video-wb', (event, vals) => {
   const base = scope === 'all' ? VIDEO_WB_DEFAULT : WB_IDENTITY;
   const params = sanitizeWB(vals.params || vals, base);
 
-  const video = store.get('video') || { global: { ...VIDEO_WB_DEFAULT }, servers: {} };
-  video.servers = video.servers || {};
-  if (scope === 'all') {
-    video.global = params;
-  } else if (WB_KEYS.every(k => params[k] === WB_IDENTITY[k])) {
-    delete video.servers[scope]; // all-neutral per-server layer → remove it
-  } else {
-    video.servers[scope] = params;
-  }
-
-  store.set('video', video);
-  applyVideoFilterAll(); // re-apply the combined filter to every open window
+  persistWB(scope, params);
   return true;
 });
+
+// White point: sample the stream and correct its white balance.
+ipcMain.handle('white-balance', (event, mode, scope) => {
+  if (!isTrustedSender(event)) return { ok: false, reason: 'not allowed' };
+  return whiteBalance(mode === 'point' ? 'point' : 'auto',
+                      scope === 'global' ? 'global' : 'server');
+});
+
+ipcMain.handle('undo-white-balance', (event) => {
+  if (!isTrustedSender(event)) return { ok: false };
+  const r = undoWhitePoint();
+  if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
+  return r;
+});
+
+ipcMain.handle('can-undo-white-balance', (event) =>
+  isTrustedSender(event) ? !!lastWhitePoint : false);
 
 // Open one or several configured servers from the connect screen. The current
 // (connect) window is reused for the first selection; the rest open as new

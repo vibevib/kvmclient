@@ -833,6 +833,191 @@ test.describe('camera and microphone', () => {
   });
 });
 
+// "The video is too blue": sample something that ought to be white and let the
+// app work out the gains, instead of hunting for them on three sliders.
+test.describe('white point', () => {
+  // A server whose stream is one known colour, so the arithmetic is checkable.
+  const tinted = (path) => [{ id: 'a', name: 'Alpha', host: kvm.url + path }];
+
+  const layerFor = (h, id) => (h.readConfig().video || {}).servers?.[id];
+  const globalLayer = (h) => (h.readConfig().video || {}).global;
+
+  const waitForStream = async (h) => {
+    await expect.poll(() => evalInView(h.app, '127.0.0.1',
+      `!!document.querySelector('#marker') && document.querySelector('#marker').dataset.painted === '1'`),
+      { timeout: 15000 }).toBe(true);
+  };
+
+  test('auto neutralises a stream that is too blue', async () => {
+    // rgb(200, 205, 255): the mean is 220, so the gains should come out
+    // 220/200, 220/205, 220/255 — pulling blue down and red up.
+    const h = await launchApp({
+      servers: tinted('/tint?r=200&g=205&b=255'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+
+      const g = globalLayer(h);
+      const own = layerFor(h, 'a');
+      // The layers multiply, so it is the EFFECTIVE gain that has to be right.
+      const eff = { r: g.r * own.r, g: g.g * own.g, b: g.b * own.b };
+      expect(eff.r).toBeCloseTo(220 / 200, 1);
+      expect(eff.g).toBeCloseTo(220 / 205, 1);
+      expect(eff.b).toBeCloseTo(220 / 255, 1);
+      // And the point of the exercise: blue is pulled down, red is pushed up.
+      expect(eff.b).toBeLessThan(1);
+      expect(eff.r).toBeGreaterThan(1);
+    } finally { await h.close(); }
+  });
+
+  test('auto finds a light patch in a dark frame', async () => {
+    const h = await launchApp({
+      servers: tinted('/patch?r=210&g=210&b=250'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+
+      const g = globalLayer(h), own = layerFor(h, 'a');
+      // It must have sampled the patch, not the near-black background.
+      expect(g.b * own.b).toBeLessThan(0.97);
+      expect(g.b * own.b).toBeGreaterThan(0.75);
+    } finally { await h.close(); }
+  });
+
+  test('a neutral stream is left alone', async () => {
+    const h = await launchApp({
+      servers: tinted('/tint?r=180&g=180&b=180'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+
+      const g = globalLayer(h), own = layerFor(h, 'a');
+      // Already neutral, so the effective gains come out flat — whatever the
+      // global base happens to be.
+      for (const k of ['r', 'g', 'b']) expect(g[k] * own[k]).toBeCloseTo(1, 1);
+    } finally { await h.close(); }
+  });
+
+  test('picking a point uses that point', async () => {
+    const h = await launchApp({
+      servers: tinted('/patch?r=200&g=205&b=255'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Pick White Point…');
+
+      // Wait for the crosshair, then click the patch. The canvas is 320x240 and
+      // the patch is at 40,40..120,120 in source pixels.
+      await expect.poll(() => evalInView(h.app, '127.0.0.1',
+        `!!document.getElementById('__lekvm_pick')`), { timeout: 15000 }).toBe(true);
+
+      await evalInView(h.app, '127.0.0.1', `(function(){
+        var el = document.getElementById('stream-canvas');
+        var r = el.getBoundingClientRect();
+        // Middle of the patch, mapped from source pixels to the viewport.
+        var x = r.left + (80 / 320) * r.width;
+        var y = r.top  + (80 / 240) * r.height;
+        document.getElementById('__lekvm_pick').dispatchEvent(
+          new MouseEvent('click', { clientX: x, clientY: y, bubbles: true, cancelable: true }));
+        return true;
+      })()`);
+
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+      const g = globalLayer(h), own = layerFor(h, 'a');
+      expect(g.b * own.b).toBeCloseTo(220 / 255, 1);
+      // The crosshair must clean up after itself.
+      expect(await evalInView(h.app, '127.0.0.1',
+        `!!document.getElementById('__lekvm_pick')`)).toBe(false);
+    } finally { await h.close(); }
+  });
+
+  test('Esc cancels the pick and changes nothing', async () => {
+    const h = await launchApp({
+      servers: tinted('/tint?r=200&g=205&b=255'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Pick White Point…');
+      await expect.poll(() => evalInView(h.app, '127.0.0.1',
+        `!!document.getElementById('__lekvm_pick')`), { timeout: 15000 }).toBe(true);
+
+      await evalInView(h.app, '127.0.0.1',
+        `(window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })), true)`);
+
+      await expect.poll(() => evalInView(h.app, '127.0.0.1',
+        `!!document.getElementById('__lekvm_pick')`), { timeout: 15000 }).toBe(false);
+      expect(layerFor(h, 'a')).toBeUndefined();
+    } finally { await h.close(); }
+  });
+
+  test('undo puts back what it replaced', async () => {
+    const h = await launchApp({
+      servers: tinted('/tint?r=200&g=205&b=255'),
+      openSessions: [{ serverId: 'a' }], cssOverrides: [],
+      video: { global: { r: 1.1, g: 1.09, b: 1.22, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 },
+               servers: { a: { r: 1.2, g: 1, b: 0.9, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 } } }
+    });
+    try {
+      await waitForStream(h);
+      expect(layerFor(h, 'a').r).toBeCloseTo(1.2, 3);
+
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => layerFor(h, 'a').r !== 1.2, { timeout: 15000 }).toBe(true);
+
+      await clickMenu(h.app, 'Undo White Balance');
+      await expect.poll(() => layerFor(h, 'a') && layerFor(h, 'a').r, { timeout: 15000 })
+        .toBeCloseTo(1.2, 3);
+      // The layer it did not touch is untouched.
+      expect(layerFor(h, 'a').b).toBeCloseTo(0.9, 3);
+    } finally { await h.close(); }
+  });
+
+  // A blown-out area cannot tell you how much of a cast there is — the excess is
+  // simply gone. So a dimmer area that is still measurable is worth more, even
+  // though it scores lower on brightness.
+  test('a measurable area beats a brighter blown-out one', async () => {
+    const h = await launchApp({
+      servers: tinted('/two'), openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+
+      const g = globalLayer(h), own = layerFor(h, 'a');
+      // Sampling rgb(190,195,230) gives a mean of 205, so blue is pulled down.
+      // Had it taken the pure-white block instead, every gain would be 1.
+      expect(g.b * own.b).toBeCloseTo(205 / 230, 1);
+      expect(g.b * own.b).toBeLessThan(0.95);
+    } finally { await h.close(); }
+  });
+
+  test('a page with no video changes nothing', async () => {
+    const h = await launchApp({
+      servers: tinted('/novideo'), openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(1);
+      await clickMenu(h.app, 'Auto White Balance');
+      // Give it room to do the wrong thing before declaring that it did not.
+      await new Promise(r => setTimeout(r, 1500));
+      expect(layerFor(h, 'a')).toBeUndefined();
+      expect(globalLayer(h).b).toBeCloseTo(1.22, 3);  // the tuned default, unmoved
+    } finally { await h.close(); }
+  });
+});
+
 test.describe('hardening', () => {
   test('a remote page cannot read the server list or redirect the session', async () => {
     const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });

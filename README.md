@@ -10,6 +10,7 @@ A macOS desktop wrapper around the [GL.iNet hardware KVM](https://www.gl-inet.co
 - **Splash / connection picker** — on launch it reopens the windows you had open; if none, a splash screen lists your saved servers to pick from (or connect to an ad-hoc URL).
 - **Session tabs** — one window, several sessions, switched from an edge-docked strip. Opening a server adds a tab by default; a tab can show a short name of your choosing, or just its position.
 - **Live video adjustments** — a floating panel (⌥⌘C) with **white balance** (per-channel R/G/B), **brightness / contrast / saturation**, and **sharpen**, in two layers: a **Global** layer for all servers and a **This server** layer for the current tab. Changes preview live and **save automatically**.
+- **White point picker** — the video is too blue? Let the app find the whitest-looking area and neutralise it, or click something that should be white. One step, undoable.
 - **CSS overrides** — inject arbitrary CSS into the remote UI, scoped **globally or per-server**, applied instantly.
 - **Hotkey blocking** — configurable list of macOS shortcuts that get passed through to the remote instead of acting on the host.
 - **Camera / microphone passthrough** — optional, off by default: hand the remote
@@ -87,6 +88,36 @@ The panel is a child window of the session it was opened from, so it stays above
 
 White balance is a real per-channel gain (SVG `feComponentTransfer`), sharpen is an SVG `feConvolveMatrix` unsharp kernel — both applied to the detected video element. Every change previews live on the active tab and saves automatically (no Save button).
 
+## White Point
+
+Rather than hunting for the right Red/Green/Blue by hand, point the app at
+something that ought to be white and let it work them out.
+
+- **View → Auto White Balance** (⌥⌘W) scans the picture for the area that most
+  looks like it should be white and neutralises it.
+- **View → Pick White Point…** (⇧⌥⌘W) puts a crosshair over the session; click
+  something white and it averages **5×5 pixels** there.
+- **View → Undo White Balance** puts back exactly what it replaced.
+
+Both are also buttons in the ⌥⌘C panel, with an **Apply to** choice of *this
+server* or *global*. Afterwards the sliders hold the computed numbers, so you can
+nudge them or ignore them and set your own.
+
+It samples the **raw** stream — what the KVM sent, before any correction — so the
+gains come out absolute rather than relative to whatever is already applied. If a
+patch that should be white reads `rgb(200, 205, 255)`, its mean is 220 and the
+gains are `220/200`, `220/205`, `220/255`: blue down, red up.
+
+Two things it will tell you rather than hide:
+
+- **That area is blown out.** Once a channel hits 255 the excess is simply gone,
+  so the correction is a floor, not a measurement. Auto prefers an area it *can*
+  measure even when a brighter one is available — but a screen that is genuinely
+  too blue often has blue pegged everywhere, so it falls back to a clipped area
+  and says so rather than refusing.
+- **It hit the slider limits.** The result is pinned to the range the panel
+  offers, so a wild sample gives a compromise.
+
 ## CSS Overrides
 
 Add/edit rules in **Settings → CSS Overrides**. Each rule has a selector, CSS, and an **Apply to** scope (all servers or one). Defaults hide clutter and correct the stream; changes apply live.
@@ -101,6 +132,8 @@ Video adjustments are **not** stored here — they live under their own `video` 
 | `Cmd + R` | Reload the active session |
 | `Cmd + `` ` `` | Quit application |
 | `Alt + Cmd + C` | Adjust video color |
+| `Alt + Cmd + W` | Auto white balance |
+| `Shift + Alt + Cmd + W` | Pick white point |
 | `Alt + Cmd + I` | Toggle DevTools (for the active session) |
 | `Ctrl + Tab` / `Ctrl + Shift + Tab` | Next / previous session (tabbed window) |
 
