@@ -1,4 +1,7 @@
 const { test, expect } = require('@playwright/test');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   startFakeKvm, launchApp, windowsInfo, sessionUrls,
   evalInView, evalInWindow, clickMenu, menuAccelerator, webContentsCount
@@ -310,6 +313,113 @@ test.describe('hardening', () => {
       await new Promise(r => setTimeout(r, 1000));
       const urls = await sessionUrls(h.app);
       expect(urls.some(u => u.includes('example.invalid'))).toBe(false);
+    } finally { await h.close(); }
+  });
+
+  // The session view used to run with webSecurity:false, which let the remote KVM
+  // page — or anyone MITM-ing it over plain HTTP on the LAN — read any file on the
+  // machine and any cross-origin response, then post both anywhere.
+  test('the remote page cannot read local files', async () => {
+    const secret = path.join(os.tmpdir(), `kvm-secret-${Date.now()}.txt`);
+    fs.writeFileSync(secret, 'TOP_SECRET_VALUE');
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
+        .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
+
+      const viaFetch = await evalInView(h.app, '127.0.0.1',
+        `fetch(${JSON.stringify('file://' + secret)}).then(r => r.text()).then(t => 'READ:' + t).catch(() => 'BLOCKED')`);
+      expect(viaFetch).toBe('BLOCKED');
+
+      const viaXhr = await evalInView(h.app, '127.0.0.1', `new Promise(res => {
+        try {
+          const x = new XMLHttpRequest();
+          x.open('GET', ${JSON.stringify('file://' + secret)});
+          x.onload = () => res('READ:' + x.responseText);
+          x.onerror = () => res('BLOCKED');
+          x.send();
+        } catch (e) { res('BLOCKED'); }
+      })`);
+      expect(viaXhr).toBe('BLOCKED');
+    } finally { await h.close(); fs.rmSync(secret, { force: true }); }
+  });
+
+  test('the remote page cannot read cross-origin responses', async () => {
+    const other = await startFakeKvm();
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
+        .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
+
+      const res = await evalInView(h.app, `:${kvm.port}`,
+        `fetch('${other.url}/').then(r => r.text()).then(() => 'READ').catch(() => 'BLOCKED')`);
+      expect(res).toBe('BLOCKED');
+    } finally { await h.close(); await other.close(); }
+  });
+
+  // A redirect used to carry the session — preload and all — onto any site on the
+  // internet. Navigation is confined to the device the session is connected to.
+  test('the remote page cannot navigate the session off the device', async () => {
+    const elsewhere = await startFakeKvm();
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
+        .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
+
+      // Same loopback address, but a different HOSTNAME — i.e. a different device.
+      await evalInView(h.app, `:${kvm.port}`,
+        `(location.href = 'http://localhost:${elsewhere.port}/hijack', 'go')`);
+      await new Promise(r => setTimeout(r, 1500));
+
+      const urls = await sessionUrls(h.app);
+      expect(urls.some(u => u.includes('localhost'))).toBe(false);
+      expect(urls.some(u => u.includes(`127.0.0.1:${kvm.port}`))).toBe(true);
+    } finally { await h.close(); await elsewhere.close(); }
+  });
+
+  test('the remote page cannot open popup windows', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
+        .toEqual(expect.arrayContaining([expect.stringContaining('127.0.0.1')]));
+
+      const before = (await windowsInfo(h.app)).length;
+      await evalInView(h.app, '127.0.0.1', `(window.open('http://localhost:1/popup', '_blank'), 'ok')`);
+      await new Promise(r => setTimeout(r, 1500));
+      expect((await windowsInfo(h.app)).length).toBe(before);
+    } finally { await h.close(); }
+  });
+
+  // Overrides are injected as `selector { css }`, so an unbalanced brace would let
+  // one row restyle the whole remote page (and pull in a remote url()).
+  test('a CSS override cannot break out of its own rule', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await openSettings(h.app);
+      await evalInWindow(h.app, 'settings.html', `window.kvmAPI.saveConfig({ cssOverrides: [
+        { selector: '#x', css: 'color: red } body { background: url("http://evil.test/leak")', enabled: true, scope: 'all' }
+      ] })`);
+
+      const row = (h.readConfig().cssOverrides || [])[0];
+      expect(row.css).not.toContain('}');
+      expect(row.css).not.toContain('{');
+    } finally { await h.close(); }
+  });
+
+  // Defence in depth, not a fixed bug: `scope` indexes video.servers, and today a
+  // '__proto__' scope is inert (it retargets that object's prototype, creates no own
+  // key, and does not survive JSON). Pin that down so it stays harmless.
+  test('a video layer cannot be saved under a prototype-polluting scope', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a', show: false }] });
+    try {
+      await openSettings(h.app);
+      await evalInWindow(h.app, 'settings.html',
+        `window.kvmAPI.saveVideoWB({ params: { r: 9, g: 1, b: 1, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 }, scope: '__proto__' })`);
+
+      const cfg = h.readConfig();
+      expect(Object.keys(cfg.video.servers || {})).not.toContain('__proto__');
+      const polluted = await evalInWindow(h.app, 'settings.html', `({}).r === undefined ? 'clean' : 'polluted'`);
+      expect(polluted).toBe('clean');
     } finally { await h.close(); }
   });
 

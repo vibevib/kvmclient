@@ -16,6 +16,8 @@ A macOS desktop wrapper around the [GL.iNet hardware KVM](https://www.gl-inet.co
 
 ## Getting Started
 
+Requires **Node 20+**. The app runs on Electron 44.
+
 ```bash
 npm install
 npm start          # run in development
@@ -41,7 +43,9 @@ npm test
 ```
 
 They cover the splash/picker, session restore, tab-strip switching, live CSS
-overrides, the video-adjustment layers, and the IPC hardening. Requires Node 20+.
+overrides, the video-adjustment layers, and the security boundary below — a
+hostile remote page trying to read local files, read cross-origin responses,
+redirect the session off the device, or open popups.
 
 ## Servers & Connections
 
@@ -64,7 +68,9 @@ White balance is a real per-channel gain (SVG `feComponentTransfer`), sharpen is
 
 ## CSS Overrides
 
-Add/edit rules in **Settings → CSS Overrides**. Each rule has a selector, CSS, and an **Apply to** scope (all servers or one). Defaults hide clutter and correct the stream; changes apply live. The video adjustments above are stored as a special `#video-wrapper` rule.
+Add/edit rules in **Settings → CSS Overrides**. Each rule has a selector, CSS, and an **Apply to** scope (all servers or one). Defaults hide clutter and correct the stream; changes apply live.
+
+Video adjustments are **not** stored here — they live under their own `video` key in the config, so saving the Settings pane can't clobber them. (Older configs that kept them as a `#video-wrapper` rule are migrated automatically on launch.)
 
 ## Keyboard Shortcuts
 
@@ -82,6 +88,37 @@ Add/edit rules in **Settings → CSS Overrides**. Each rule has a selector, CSS,
 These macOS shortcuts are passed through to the remote instead of acting on the host (editable in **Settings → Blocked Hotkeys**):
 
 `Cmd + W`, `Cmd + Q`, `Cmd + T`, `Cmd + N`, `Cmd + H`, `Cmd + M`, `Cmd + Tab`
+
+## Security
+
+The KVM web UI is served over plain **HTTP on your LAN**, so anyone on that
+network can tamper with it in transit. The app therefore treats the remote page
+as **untrusted** and confines it:
+
+- **No local file or cross-origin access.** Renderers run with `webSecurity` and
+  `contextIsolation` on, `nodeIntegration` off and `sandbox` on, so the remote
+  page can't read files off your Mac or read responses from other hosts.
+- **Navigation is pinned to the device.** A session can only navigate within the
+  host it's connected to (or back to the local connect page); popups and
+  `<webview>` are denied, so a redirect can't carry the session — and its
+  privileges — onto an arbitrary site.
+- **Privileged IPC is local-only.** The settings/connect/colour/tab pages can
+  call it; the remote page shares a preload with the connect page but is rejected
+  by an explicit sender check.
+- **Certificates are only waived for your KVM.** A self-signed cert is accepted
+  only from a **private-network address you configured** (RFC1918, loopback,
+  link-local, CGNAT or `.local`). Certificates from anywhere else are validated
+  normally.
+- **Least-privilege permissions.** Only pointer-lock, fullscreen and clipboard
+  are granted; camera, microphone, geolocation, USB/HID/serial and notifications
+  are denied.
+- Local pages carry a strict CSP, and config coming back from Settings is
+  coerced to shape before it is stored or injected.
+
+These are enforced in `main.js` and covered by the `hardening` tests; `ARC.md`
+documents where each one lives and which two are easiest to undo by accident.
+
+The macOS build is **unsigned** — see *Getting Started* for the Gatekeeper prompt.
 
 ## Configuration
 

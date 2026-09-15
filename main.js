@@ -1,5 +1,6 @@
-const { app, BrowserWindow, BrowserView, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, session } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const Store = require('electron-store');
 const pkg = require('./package.json');
 
@@ -9,10 +10,26 @@ const APP_NAME = pkg.productName || pkg.name;
 // Set app name for macOS menu bar
 app.setName(APP_NAME);
 
-// Disable HTTPS upgrades and certificate errors for local network
-app.commandLine.appendSwitch('ignore-certificate-errors');
+// KVM boxes on the LAN usually serve a self-signed certificate, so some leniency
+// is needed — but NOT the global `ignore-certificate-errors` switch, which turns
+// validation off for every host this app ever talks to, public internet included.
+// The `certificate-error` handler at the bottom of this file instead waives errors
+// only for a private-network host the user actually configured.
 app.commandLine.appendSwitch('allow-insecure-localhost');
 app.commandLine.appendSwitch('disable-features', 'AutoupgradeMixedContent');
+
+// The local pages we ship. Anything else — above all the remote KVM UI — is
+// untrusted content: it may not reach privileged IPC, and a session may not be
+// navigated to it.
+const LOCAL_PAGES = ['connect.html', 'settings.html', 'color.html', 'tabbar.html'];
+const LOCAL_PAGE_URLS = new Set(LOCAL_PAGES.map(f => pathToFileURL(path.join(__dirname, f)).href));
+
+// Permissions a KVM session has a legitimate need for: mouse capture, fullscreen
+// and clipboard passthrough. Camera, microphone, geolocation, USB/HID/serial,
+// notifications and the rest are denied.
+const ALLOWED_PERMISSIONS = new Set([
+  'fullscreen', 'pointerLock', 'keyboardLock', 'clipboard-read', 'clipboard-sanitized-write'
+]);
 
 // Default video adjustment: per-channel white-balance gains (r/g/b) + tone + sharpen.
 const VIDEO_WB_DEFAULT = { r: 1.10, g: 1.09, b: 1.22, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
@@ -114,7 +131,7 @@ let lastActiveInstanceId = null;
 
 // Sessions are records in `windows`; several may share one BrowserWindow. Per-window
 // tab state lives on the window as win.__tab:
-//   { overlay: BrowserView|null, show: bool, sessionIds: number[], activeId: number|null }
+//   { overlay: WebContentsView|null, show: bool, sessionIds: number[], activeId: number|null }
 // overlayOwner maps a strip overlay's webContents id -> its BrowserWindow (for tab IPC).
 const overlayOwner = new Map();
 
@@ -193,11 +210,153 @@ function effectiveWB(serverId) {
   return combineWB(globalWB(), serverWB(serverId));
 }
 
-// Ensure a host string has a scheme (accepts a bare IP like "192.168.1.100")
+// Ensure a host string has a scheme (accepts a bare IP like "192.168.1.100") and
+// is a real http(s) URL. Anything else — file:, javascript:, data:, garbage —
+// yields '' so it is never handed to loadURL().
 function normalizeHost(host) {
   const h = (host || '').trim();
   if (!h) return '';
-  return /^https?:\/\//i.test(h) ? h : `http://${h}`;
+  // Require '://' to count as a scheme, so a bare "kvm.local:8080" is a host
+  // and port rather than a "kvm.local:" scheme.
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(h) ? h : `http://${h}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.href;
+  } catch (e) {
+    return '';
+  }
+}
+
+// normalizeHost as a parsed URL, or null.
+function parseHostUrl(host) {
+  const s = normalizeHost(host);
+  if (!s) return null;
+  try { return new URL(s); } catch (e) { return null; }
+}
+
+// Is this hostname on the local network? Only such a host may have a TLS
+// certificate error waived — a KVM appliance's self-signed cert is expected,
+// a bad cert from the public internet is an attack.
+function isPrivateHostname(hostname) {
+  const h = (hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h) return false;
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local')) return true;
+  if (h === '::1') return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(h)) return true;   // IPv6 unique-local fc00::/7
+  if (/^fe[89ab][0-9a-f]:/.test(h)) return true;   // IPv6 link-local fe80::/10
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const o = m.slice(1).map(Number);
+  if (o.some(n => n > 255)) return false;
+  const [a, b] = o;
+  if (a === 10 || a === 127) return true;                 // RFC1918 / loopback
+  if (a === 192 && b === 168) return true;                // RFC1918
+  if (a === 172 && b >= 16 && b <= 31) return true;       // RFC1918
+  if (a === 169 && b === 254) return true;                // link-local
+  if (a === 100 && b >= 64 && b <= 127) return true;      // CGNAT
+  return false;
+}
+
+// Hostnames the user has pointed this app at: every configured server, plus the
+// host any live session was last told to load (the connect box can target a host
+// that is not saved as a server yet).
+function knownHostnames() {
+  const out = new Set();
+  const add = (host) => {
+    const u = parseHostUrl(host);
+    if (u) out.add(u.hostname.toLowerCase());
+  };
+  for (const srv of getServers()) add(srv.host);
+  for (const rec of windows.values()) add(rec.lastHost);
+  return out;
+}
+
+// Is `url` one of the local pages we ship? Used as the trust boundary for IPC and
+// for navigation — a prefix test on 'file://' would accept any file on disk.
+function isLocalPageUrl(url) {
+  if (!url) return false;
+  let u;
+  try { u = new URL(url); } catch (e) { return false; }
+  if (u.protocol !== 'file:') return false;
+  u.search = '';
+  u.hash = '';
+  return LOCAL_PAGE_URLS.has(u.href);
+}
+
+// ---- Config sanitizing ------------------------------------------------------
+// Settings writes whole arrays back into the store, and whatever lands there is
+// later injected as CSS into the remote page and used as object keys. Coerce it
+// to the expected shape so a malformed or hostile payload cannot break out.
+
+// Keys that would mutate Object.prototype if used as an index.
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+const asStr = (v, max = 2000) => (typeof v === 'string' ? v.slice(0, max) : '');
+// Injected as `selector { css }` — a stray brace would let one row escape its own
+// rule and restyle (or exfiltrate from) the whole page.
+const asCss = (v, max = 2000) => asStr(v, max).replace(/[{}]/g, '');
+const safeId = (v, fallback) => {
+  const id = asStr(v, 100).replace(/[^\w.-]/g, '');
+  return (!id || RESERVED_KEYS.has(id)) ? fallback : id;
+};
+
+function sanitizeServers(list) {
+  if (!Array.isArray(list)) return getServers();
+  const seen = new Set();
+  return list.slice(0, 500).map((raw, i) => {
+    const o = (raw && typeof raw === 'object') ? raw : {};
+    let id = safeId(o.id, `s${i}`);
+    while (seen.has(id)) id += '_';
+    seen.add(id);
+    return { id, name: asStr(o.name, 200), host: asStr(o.host, 500) };
+  });
+}
+
+function sanitizeOverrides(list) {
+  if (!Array.isArray(list)) return store.get('cssOverrides') || [];
+  return list.slice(0, 500).map(raw => {
+    const o = (raw && typeof raw === 'object') ? raw : {};
+    return {
+      selector: asCss(o.selector, 500),
+      css: asCss(o.css),
+      enabled: !!o.enabled,
+      scope: safeId(o.scope, 'all') || 'all'
+    };
+  }).filter(o => o.selector);
+}
+
+function sanitizeHotkeys(list) {
+  if (!Array.isArray(list)) return store.get('blockedHotkeys') || [];
+  return list.slice(0, 200).map(raw => {
+    const o = (raw && typeof raw === 'object') ? raw : {};
+    return {
+      key: asStr(o.key, 20),
+      meta: !!o.meta,
+      description: asStr(o.description, 200),
+      enabled: !!o.enabled
+    };
+  }).filter(h => h.key);
+}
+
+function sanitizeTabs(cfg) {
+  const t = (cfg && typeof cfg === 'object') ? cfg : {};
+  const size = Number(t.size);
+  return {
+    enabled: !!t.enabled,
+    position: ['left', 'right', 'top', 'bottom'].includes(t.position) ? t.position : 'right',
+    overlay: t.overlay !== false,
+    showButtons: t.showButtons !== false,
+    size: Number.isFinite(size) ? Math.min(400, Math.max(8, size)) : 76,
+    items: (Array.isArray(t.items) ? t.items : []).slice(0, 200).map((raw, i) => {
+      const it = (raw && typeof raw === 'object') ? raw : {};
+      return {
+        id: safeId(it.id, `t${Date.now().toString(36)}-${i}`),
+        serverId: safeId(it.serverId, ''),
+        behavior: it.behavior === 'suspend' ? 'suspend' : 'keep'
+      };
+    })
+  };
 }
 
 // Build the CSS for one server: enabled overrides scoped to "all" or this server.
@@ -277,6 +436,7 @@ function loadHostInView(rec, host) {
   const url = normalizeHost(host);
   if (url) {
     rec.error = null;
+    rec.lastHost = url; // what this session is allowed to navigate within
     rec.view.webContents.loadURL(url);
   } else {
     showConnectPage(rec, 'No host configured');
@@ -284,7 +444,7 @@ function loadHostInView(rec, host) {
 }
 
 // Resolve the window record that sent an IPC message (used by the connect page,
-// which runs inside a server's BrowserView).
+// which runs inside a server's WebContentsView).
 function findRecBySender(event) {
   for (const rec of windows.values()) {
     if (!rec.view.webContents.isDestroyed() && rec.view.webContents === event.sender) {
@@ -295,15 +455,49 @@ function findRecBySender(event) {
 }
 
 // Privileged IPC is only for our own local pages. The remote KVM page shares the
-// session BrowserView (and therefore preload-remote), so without this check it —
+// session view (and therefore preload-remote), so without this check it —
 // or anyone MITM-ing it on the LAN — could read every configured host via
 // get-config or redirect the session via connect.
 function isTrustedSender(event) {
   try {
-    return (event.sender.getURL() || '').startsWith('file://');
+    return isLocalPageUrl(event.sender.getURL());
   } catch (e) {
     return false;
   }
+}
+
+// Where a session view may navigate on its OWN initiative: our local pages,
+// about:blank (used to suspend a tab), or the device it is connected to. Without
+// this the remote page can redirect the session anywhere — and the site it lands
+// on inherits this view's preload and privileges. Scheme and port are not pinned
+// because a KVM box legitimately redirects http->https or onto another port.
+function sessionAllowsUrl(rec, url) {
+  if (!url) return false;
+  if (url === 'about:blank' || url.startsWith('about:blank#') || url.startsWith('about:blank?')) return true;
+  if (isLocalPageUrl(url)) return true;
+  const target = parseHostUrl(url);
+  if (!target) return false;
+  const current = parseHostUrl(rec.lastHost || (rec.server && rec.server.host) || '');
+  return !!current && current.hostname.toLowerCase() === target.hostname.toLowerCase();
+}
+
+// Refuse renderer-driven navigation off the device, and refuse popups outright.
+// (will-navigate does not fire for our own loadURL() calls, so this only
+// constrains navigation the page itself starts.)
+function guardSessionNavigation(rec) {
+  const wc = rec.view.webContents;
+  const block = (e, url) => {
+    if (sessionAllowsUrl(rec, url)) return;
+    e.preventDefault();
+    console.warn(`[${APP_NAME}] blocked navigation to ${url}`);
+  };
+  wc.on('will-navigate', block);
+  wc.on('will-redirect', block);
+  wc.setWindowOpenHandler(({ url }) => {
+    console.warn(`[${APP_NAME}] blocked popup to ${url}`);
+    return { action: 'deny' };
+  });
+  wc.on('will-attach-webview', (e) => e.preventDefault());
 }
 
 // ---- Windows ----------------------------------------------------------------
@@ -322,17 +516,22 @@ function persistOpenSessions() {
   store.set('openSessions', out);
 }
 
-// Create one session (a BrowserView) inside a window and start loading. `server`
+// Create one session (a WebContentsView) inside a window and start loading. `server`
 // null shows the connect/splash page. Returns the session record (also in `windows`).
 function createSession(win, server, itemId) {
   const id = nextInstanceId++;
-  const view = new BrowserView({
+  const view = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'preload-remote.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      allowRunningInsecureContent: true,
-      webSecurity: false,
+      sandbox: true,
+      // webSecurity MUST stay on. With it off the remote KVM page — or anyone
+      // MITM-ing it over plain HTTP on the LAN, or any site it redirects to —
+      // can read arbitrary local files via fetch('file:///…') and read any
+      // cross-origin response, then post both anywhere.
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       backgroundThrottling: false // keep hidden 'keep' sessions alive
     }
   });
@@ -342,6 +541,7 @@ function createSession(win, server, itemId) {
     itemId: itemId || null, suspended: false
   };
   windows.set(id, rec);
+  guardSessionNavigation(rec);
 
   view.webContents.on('did-finish-load', () => { rec.cssKey = null; applyCSSToView(rec); applyVideoFilter(rec); });
   view.webContents.on('did-navigate-in-page', () => { applyCSSToView(rec); applyVideoFilter(rec); });
@@ -366,7 +566,7 @@ function createSession(win, server, itemId) {
   return rec;
 }
 
-// A BrowserView's webContents is NOT destroyed when its window closes (it lives
+// A view's webContents is NOT destroyed when its window closes (it lives
 // until the view is garbage collected), so release it explicitly — otherwise the
 // remote stream keeps running and holding memory after the window is gone.
 function destroyView(view) {
@@ -420,10 +620,10 @@ function layoutWindow(win) {
   // just covered), and the strip on top of everything.
   const active = windows.get(t.activeId);
   if (active && active.view && !active.view.webContents.isDestroyed()) {
-    win.setTopBrowserView(active.view);
+    win.contentView.addChildView(active.view);
   }
   if (t.overlay && !t.overlay.webContents.isDestroyed()) {
-    win.setTopBrowserView(t.overlay);
+    win.contentView.addChildView(t.overlay);
   }
 }
 
@@ -480,7 +680,7 @@ function activateItemInWin(win, item) {
   if (!sess) {
     sess = createSession(win, server, item.id);
     t.sessionIds.push(sess.id);
-    win.addBrowserView(sess.view);
+    win.contentView.addChildView(sess.view);
   } else if (sess.suspended) {
     sess.suspended = false;
     loadHostInView(sess, server.host);
@@ -489,7 +689,7 @@ function activateItemInWin(win, item) {
   t.activeId = sess.id;
   lastActiveInstanceId = sess.id;
   layoutWindow(win);
-  if (t.overlay) win.setTopBrowserView(t.overlay);
+  if (t.overlay) win.contentView.addChildView(t.overlay);
   sess.view.webContents.focus();
   win.setTitle(`${APP_NAME} — ${server.name || server.host}`);
   pushWinTabsState(win);
@@ -505,21 +705,22 @@ function setStripShown(win, show) {
   const t = win.__tab;
   t.show = show;
   if (show && !t.overlay) {
-    const overlay = new BrowserView({
+    const overlay = new WebContentsView({
       webPreferences: {
         preload: path.join(__dirname, 'preload-tabbar.js'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: true
       }
     });
     t.overlay = overlay;
     overlayOwner.set(overlay.webContents.id, win);
-    win.addBrowserView(overlay);
+    win.contentView.addChildView(overlay);
     overlay.webContents.loadFile('tabbar.html');
     overlay.webContents.once('did-finish-load', () => pushWinTabsState(win));
   }
   layoutWindow(win);
-  if (t.overlay) win.setTopBrowserView(t.overlay);
+  if (t.overlay) win.contentView.addChildView(t.overlay);
   pushWinTabsState(win);
   createMenu();
   persistOpenSessions();
@@ -556,7 +757,7 @@ function applyTabsConfigLive() {
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.__tab) continue;
     layoutWindow(w);
-    if (w.__tab.overlay) { w.setTopBrowserView(w.__tab.overlay); pushWinTabsState(w); }
+    if (w.__tab.overlay) { w.contentView.addChildView(w.__tab.overlay); pushWinTabsState(w); }
   }
 }
 
@@ -571,7 +772,8 @@ function openServerWindow(server) {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
   win.__tab = { overlay: null, show: false, sessionIds: [], activeId: null };
@@ -579,7 +781,7 @@ function openServerWindow(server) {
   const first = createSession(win, server);
   win.__tab.sessionIds.push(first.id);
   win.__tab.activeId = first.id;
-  win.addBrowserView(first.view);
+  win.contentView.addChildView(first.view);
   lastActiveInstanceId = first.id;
 
   win.on('resize', () => layoutWindow(win));
@@ -592,7 +794,7 @@ function openServerWindow(server) {
   });
 
   win.on('closed', () => {
-    // Tear the views down explicitly: a BrowserView's webContents outlives its
+    // Tear the views down explicitly: a view's webContents outlives its
     // window until GC, so the KVM stream would keep running after close.
     for (const s of getWinSessions(win)) {
       destroyView(s.view);
@@ -640,7 +842,7 @@ function reloadActiveSession() {
 }
 
 // Toggle DevTools for whatever is in front. A server window shows the remote
-// session in a BrowserView, so devtools must target the view's webContents — the
+// session in a WebContentsView, so devtools must target the view's webContents — the
 // window's own webContents is empty, which is why role:'toggleDevTools' did nothing.
 function toggleDevToolsForActive() {
   const focused = BrowserWindow.getFocusedWindow();
@@ -678,7 +880,8 @@ function openSettings() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -754,7 +957,8 @@ function openColorAdjust() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -935,7 +1139,20 @@ function createMenu() {
     {
       label: 'Window',
       submenu: [
-        { label: 'Minimize', accelerator: accelUnlessBlocked('Cmd+M', 'm'), role: 'minimize' },
+        // Electron attaches a ROLE's own default accelerator even when we pass
+        // `accelerator: undefined`, so `role: 'minimize'` re-claims Cmd+M and the
+        // menu swallows it before it can reach the remote machine. When the user
+        // has blocked Cmd+M, drop the role and minimise from an explicit click,
+        // which carries no accelerator at all.
+        isHotkeyBlocked({ key: 'm', meta: true })
+          ? {
+              label: 'Minimize',
+              click: () => {
+                const w = BrowserWindow.getFocusedWindow();
+                if (w && !w.isDestroyed()) w.minimize();
+              }
+            }
+          : { label: 'Minimize', accelerator: 'Cmd+M', role: 'minimize' },
         { label: 'Zoom', role: 'zoom' }
       ]
     }
@@ -962,13 +1179,15 @@ ipcMain.handle('get-config', (event) => {
 });
 
 ipcMain.handle('save-config', (event, newConfig) => {
+  if (!isTrustedSender(event)) return false;
+  newConfig = (newConfig && typeof newConfig === 'object') ? newConfig : {};
   // Remember the hosts we were on, so an edited host reconnects its open sessions
   const prevHosts = new Map(getServers().map(s => [s.id, s.host]));
-  if (newConfig.servers !== undefined) store.set('servers', newConfig.servers);
-  if (newConfig.cssOverrides !== undefined) store.set('cssOverrides', newConfig.cssOverrides);
-  if (newConfig.blockedHotkeys !== undefined) store.set('blockedHotkeys', newConfig.blockedHotkeys);
+  if (newConfig.servers !== undefined) store.set('servers', sanitizeServers(newConfig.servers));
+  if (newConfig.cssOverrides !== undefined) store.set('cssOverrides', sanitizeOverrides(newConfig.cssOverrides));
+  if (newConfig.blockedHotkeys !== undefined) store.set('blockedHotkeys', sanitizeHotkeys(newConfig.blockedHotkeys));
   if (newConfig.tabs !== undefined) {
-    store.set('tabs', newConfig.tabs);
+    store.set('tabs', sanitizeTabs(newConfig.tabs));
     applyTabsConfigLive(); // live-apply to every window's strip
     createMenu();
   }
@@ -996,13 +1215,15 @@ ipcMain.handle('save-config', (event, newConfig) => {
 });
 
 ipcMain.handle('update-css', (event, overrides) => {
-  store.set('cssOverrides', overrides);
+  if (!isTrustedSender(event)) return false;
+  store.set('cssOverrides', sanitizeOverrides(overrides));
   applyCSSAll();
   applyVideoFilterAll();
   return true;
 });
 
-ipcMain.handle('reload-session', () => {
+ipcMain.handle('reload-session', (event) => {
+  if (!isTrustedSender(event)) return;
   reloadActiveSession();
 });
 
@@ -1036,7 +1257,8 @@ ipcMain.handle('tabs-switch', (event, index) => {
 });
 
 // Show the tab strip on the active session window (from the Settings button).
-ipcMain.handle('show-tabs-here', () => {
+ipcMain.handle('show-tabs-here', (event) => {
+  if (!isTrustedSender(event)) return false;
   const win = activeTabbedWin();
   if (win) setStripShown(win, true);
   return true;
@@ -1044,7 +1266,8 @@ ipcMain.handle('show-tabs-here', () => {
 
 // Live-apply the shared tabs config (from Settings) to every window's strip.
 ipcMain.handle('update-tabs', (event, cfg) => {
-  store.set('tabs', cfg);
+  if (!isTrustedSender(event)) return false;
+  store.set('tabs', sanitizeTabs(cfg));
   applyTabsConfigLive();
   createMenu();
   return true;
@@ -1059,7 +1282,8 @@ ipcMain.handle('connect', (event, host) => {
 // ---- Video color IPC --------------------------------------------------------
 
 // Both layers (global + this server) + which server the panel is adjusting.
-ipcMain.handle('get-video-wb', () => {
+ipcMain.handle('get-video-wb', (event) => {
+  if (!isTrustedSender(event)) return null;
   const rec = getActiveServerRec(); // the tab currently in front
   const serverId = rec ? rec.serverId : null;
   const serverName = rec && rec.server ? (rec.server.name || rec.server.host) : null;
@@ -1068,9 +1292,15 @@ ipcMain.handle('get-video-wb', () => {
 
 // Live preview of the COMBINED (global × server) look on the CURRENT active tab.
 ipcMain.handle('preview-video-wb', (event, vals) => {
+  if (!isTrustedSender(event)) return false;
   const rec = getActiveServerRec();
   if (!rec) return false;
-  const combined = combineWB(vals.global || WB_IDENTITY, vals.server || WB_IDENTITY);
+  vals = (vals && typeof vals === 'object') ? vals : {};
+  // Sanitize before these numbers are interpolated into the injected filter string.
+  const combined = combineWB(
+    sanitizeWB(vals.global, WB_IDENTITY),
+    sanitizeWB(vals.server, WB_IDENTITY)
+  );
   previewVideoFilter(rec, wbFilterValue(combined));
   return true;
 });
@@ -1078,7 +1308,15 @@ ipcMain.handle('preview-video-wb', (event, vals) => {
 // Persist one layer: scope 'all' → the global layer, a server id → that server's
 // own layer (dropped when it's identity, to stay clean).
 ipcMain.handle('save-video-wb', (event, vals) => {
-  const scope = vals.scope || 'all';
+  if (!isTrustedSender(event)) return false;
+  vals = (vals && typeof vals === 'object') ? vals : {};
+  // `scope` indexes video.servers, so pin it to 'all' or a real server id. A
+  // '__proto__' scope is inert today, but keeping arbitrary strings out of an
+  // object index is cheap.
+  const rawScope = asStr(vals.scope, 100) || 'all';
+  const scope = (rawScope === 'all' || (!RESERVED_KEYS.has(rawScope) && getServerById(rawScope)))
+    ? rawScope
+    : 'all';
   const base = scope === 'all' ? VIDEO_WB_DEFAULT : WB_IDENTITY;
   const params = sanitizeWB(vals.params || vals, base);
 
@@ -1132,13 +1370,33 @@ app.on('will-quit', (event) => {
   }
 });
 
-// Accept all certificates for local network
+// A KVM appliance's self-signed certificate is expected, so waive certificate
+// errors — but ONLY for a private-network host the user pointed this app at.
+// The previous blanket callback(true) accepted any certificate from any host,
+// which made every HTTPS connection the app made trivially MITM-able.
 app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-  event.preventDefault();
-  callback(true);
+  let hostname = '';
+  try { hostname = new URL(url).hostname.toLowerCase(); } catch (e) { /* unparseable */ }
+
+  if (hostname && isPrivateHostname(hostname) && knownHostnames().has(hostname)) {
+    event.preventDefault();
+    callback(true);
+    return;
+  }
+  console.warn(`[${APP_NAME}] rejected certificate for ${url}: ${error}`);
+  callback(false);
 });
 
 app.whenReady().then(() => {
+  // The remote KVM page is untrusted content. Grant it only what a KVM session
+  // needs (mouse capture, fullscreen, clipboard) and deny camera, microphone,
+  // geolocation, notifications, USB/HID/serial and everything else outright.
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(ALLOWED_PERMISSIONS.has(permission));
+  });
+  session.defaultSession.setPermissionCheckHandler((wc, permission) =>
+    ALLOWED_PERMISSIONS.has(permission));
+
   // Set dock icon on macOS
   if (process.platform === 'darwin') {
     app.dock.setIcon(path.join(__dirname, 'assets', 'icons', '512x512.png'));

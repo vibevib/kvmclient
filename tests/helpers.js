@@ -57,13 +57,15 @@ async function launchApp(config) {
 
 // --- main-process probes ----------------------------------------------------
 
-// Every window with its BrowserView URLs (sessions + the tab strip).
+// Every window with its child-view URLs (sessions + the tab strip).
+// contentView.children holds plain views too, so keep only the ones with
+// webContents — i.e. the WebContentsViews the app attached.
 const windowsInfo = (app) => app.evaluate(({ BrowserWindow }) =>
   BrowserWindow.getAllWindows().map(w => ({
     id: w.id,
     title: w.getTitle(),
     url: w.webContents.getURL(),
-    views: w.getBrowserViews().map(v => v.webContents.getURL())
+    views: w.contentView.children.filter(v => v.webContents).map(v => v.webContents.getURL())
   })));
 
 // Session views = everything that isn't the tab strip.
@@ -74,10 +76,11 @@ async function sessionUrls(app) {
     .flatMap(w => w.views.filter(u => !u.includes('tabbar.html')));
 }
 
-// Run JS inside the first BrowserView whose URL matches `match`.
+// Run JS inside the first child view whose URL matches `match`.
 const evalInView = (app, match, js) => app.evaluate(({ BrowserWindow }, { match, js }) => {
   for (const w of BrowserWindow.getAllWindows()) {
-    for (const v of w.getBrowserViews()) {
+    for (const v of w.contentView.children) {
+      if (!v.webContents) continue;
       if ((v.webContents.getURL() || '').includes(match)) return v.webContents.executeJavaScript(js);
     }
   }

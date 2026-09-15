@@ -16,6 +16,8 @@ async function generateIcons() {
     .toFile(pngPath);
 
   console.log('PNG created at:', pngPath);
+  // Fetched on demand rather than kept as a devDependency: it pulls in an
+  // abandoned phantomjs toolchain with known critical advisories.
   console.log('Run: npx electron-icon-builder -i assets/icon.png -o assets --flatten');
 }
 
