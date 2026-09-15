@@ -168,8 +168,38 @@ The invariants, all covered by tests in `tests/e2e.spec.js` (`hardening`):
 | Privileged IPC is reachable only from the local pages we ship | `isTrustedSender` / `isLocalPageUrl` |
 | Certificate errors are waived only for a **private-network** host the user configured | `certificate-error` handler, `isPrivateHostname` + `knownHostnames` |
 | Only pointer-lock, fullscreen and clipboard permissions are granted | `ALLOWED_PERMISSIONS` |
+| Camera/microphone are off until the user opts in, and then only for the host a session is pinned to | `mediaDecision` |
 | Config from Settings is coerced to shape before it is stored or injected | `sanitizeServers` / `sanitizeOverrides` / `sanitizeHotkeys` / `sanitizeTabs` |
 | Local pages carry a strict CSP (`default-src 'none'`) | `<meta>` in each `.html` |
+
+### Camera and microphone
+
+These are the one permission pair that is *not* simply denied. The KVM web UI
+uses them — it passes them to the remote machine as a virtual webcam and headset
+— so the app has to be able to grant them. `mediaDecision(wc, types)` requires
+three things, and all of them matter:
+
+1. the requester is a **session view**. Settings, the colour panel and the tab
+   strip are renderers too, and none of them has any business with a camera;
+2. the page asking is the host the session is **pinned to** — not somewhere it
+   redirected to, and not `about:blank`, which is where a suspended tab parks;
+3. the user has turned that specific device on. Camera and microphone are
+   separate switches.
+
+It is one setting each for the whole app rather than per session, so granting
+once covers every tab and window — which is the point; being asked per tab would
+be useless.
+
+`setPermissionCheckHandler` is the synchronous twin of the request handler and
+must agree with it, or `navigator.permissions.query()` reports something the
+actual request then contradicts.
+
+macOS gates these at the OS level as well, so `ensureSystemMediaAccess()` calls
+`systemPreferences.askForMediaAccess` when the user flips the switch — putting
+the system prompt where they expect it rather than at the surprising moment the
+remote page reaches for the device. The packaged app carries
+`NSCameraUsageDescription` / `NSMicrophoneUsageDescription` via
+`build.mac.extendInfo`; without those macOS kills the app on first access.
 
 Two rules are load-bearing and easy to undo by accident:
 

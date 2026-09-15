@@ -16,7 +16,11 @@
       "category": "public.app-category.utilities",
       "target": "dmg",
       "icon": "assets/icons/icon.icns",
-      "identity": null
+      "identity": null,
+      "extendInfo": {
+        "NSCameraUsageDescription": "KVM passes your camera to the remote machine as a virtual webcam, when you turn that on in Settings.",
+        "NSMicrophoneUsageDescription": "KVM passes your microphone to the remote machine as a virtual headset, when you turn that on in Settings."
+      }
     }
   },
   "devDependencies": {

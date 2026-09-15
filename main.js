@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, session, systemPreferences } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const Store = require('electron-store');
@@ -30,6 +30,13 @@ const LOCAL_PAGE_URLS = new Set(LOCAL_PAGES.map(f => pathToFileURL(path.join(__d
 const ALLOWED_PERMISSIONS = new Set([
   'fullscreen', 'pointerLock', 'keyboardLock', 'clipboard-read', 'clipboard-sanitized-write'
 ]);
+
+// Camera and microphone are deliberately NOT in that set. The KVM web UI can use
+// them — it passes them to the remote machine as a virtual webcam/headset — but
+// the page is served over plain HTTP on the LAN, so anyone who can rewrite it in
+// transit could turn them on. They are therefore off until the user says
+// otherwise, and even then only for a KVM they configured. See mediaDecision().
+const MEDIA_KINDS = { video: 'camera', audio: 'microphone' };
 
 // Default video adjustment: per-channel white-balance gains (r/g/b) + tone + sharpen.
 const VIDEO_WB_DEFAULT = { r: 1.10, g: 1.09, b: 1.22, brightness: 1, contrast: 1, saturate: 1, sharpen: 0 };
@@ -76,6 +83,12 @@ const store = new Store({
       { key: 'm', meta: true, description: 'Minimize', enabled: true },
       { key: 'Tab', meta: true, description: 'App switcher', enabled: true }
     ],
+    // Camera/microphone passthrough, off until asked for. One setting each for
+    // every session, so granting once covers every tab and window.
+    media: {
+      camera: false,
+      microphone: false
+    },
     // Multi-session tabbed window: one window hosting several sessions, switched
     // via an edge-docked button strip (sits over the letterbox bars).
     tabs: {
@@ -366,6 +379,18 @@ function sanitizeHotkeys(list) {
   }).filter(h => h.key);
 }
 
+// Camera/microphone passthrough. One setting each, shared by every session, so
+// granting once covers every tab and window rather than being asked per tab.
+function getMediaConfig() {
+  const m = store.get('media') || {};
+  return { camera: !!m.camera, microphone: !!m.microphone };
+}
+
+function sanitizeMedia(cfg) {
+  const m = (cfg && typeof cfg === 'object') ? cfg : {};
+  return { camera: !!m.camera, microphone: !!m.microphone };
+}
+
 function sanitizeTabs(cfg) {
   const t = (cfg && typeof cfg === 'object') ? cfg : {};
   const size = Number(t.size);
@@ -556,6 +581,63 @@ function sessionAllowsUrl(rec, url) {
   if (!target) return false;
   const current = parseHostUrl(rec.lastHost || (rec.server && rec.server.host) || '');
   return !!current && current.hostname.toLowerCase() === target.hostname.toLowerCase();
+}
+
+// The session record that owns this webContents, or null for anything else.
+function recForWebContents(wc) {
+  for (const rec of windows.values()) {
+    if (!rec.view.webContents.isDestroyed() && rec.view.webContents === wc) return rec;
+  }
+  return null;
+}
+
+// May this webContents open the camera or microphone?
+//
+// Three things all have to hold, and the order matters:
+//   1. it is a SESSION view — the settings/colour/tab pages have no business
+//      with a camera, and neither does anything else;
+//   2. the page asking is the device the session is pinned to, not somewhere it
+//      was redirected to;
+//   3. the user has turned that device on in Settings.
+// `types` is the media kinds Chromium is asking for ('video' and/or 'audio').
+function mediaDecision(wc, types) {
+  const rec = recForWebContents(wc);
+  if (!rec) return false;
+
+  const pinned = parseHostUrl(rec.lastHost || (rec.server && rec.server.host) || '');
+  let asking;
+  try { asking = new URL(wc.getURL()); } catch (e) { return false; }
+  if (!pinned || !asking.hostname) return false;
+  if (pinned.hostname.toLowerCase() !== asking.hostname.toLowerCase()) return false;
+
+  const cfg = getMediaConfig();
+  const wanted = (Array.isArray(types) && types.length) ? types : ['video', 'audio'];
+  return wanted.every(t => {
+    const kind = MEDIA_KINDS[t];
+    return kind ? cfg[kind] : false;   // anything that is not camera/mic: no
+  });
+}
+
+// macOS gates camera and microphone at the OS level too, so the app itself has
+// to hold the permission before a page inside it can. Asking at the moment the
+// user enables the setting puts the system prompt where they expect it.
+async function ensureSystemMediaAccess(kinds) {
+  if (process.platform !== 'darwin') return true;
+  let ok = true;
+  for (const kind of kinds) {
+    try {
+      if (systemPreferences.getMediaAccessStatus(kind) === 'granted') continue;
+      const granted = await systemPreferences.askForMediaAccess(kind);
+      if (!granted) {
+        ok = false;
+        console.warn(`[${APP_NAME}] macOS denied ${kind} access to the app`);
+      }
+    } catch (e) {
+      console.warn(`[${APP_NAME}] could not request ${kind} access:`, e.message);
+      ok = false;
+    }
+  }
+  return ok;
 }
 
 // Refuse renderer-driven navigation off the device, and refuse popups outright.
@@ -1379,13 +1461,14 @@ function buildMenuTemplate() {
 // ---- IPC --------------------------------------------------------------------
 
 ipcMain.handle('get-config', (event) => {
-  if (!isTrustedSender(event)) return { servers: [], cssOverrides: [], blockedHotkeys: [], tabs: getTabsConfig(), host: '' };
+  if (!isTrustedSender(event)) return { servers: [], cssOverrides: [], blockedHotkeys: [], tabs: getTabsConfig(), media: { camera: false, microphone: false }, host: '' };
   const rec = findRecBySender(event);
   return {
     servers: getServers(),
     cssOverrides: store.get('cssOverrides'),
     blockedHotkeys: getBlockedHotkeys(),
     tabs: getTabsConfig(),
+    media: getMediaConfig(),
     // connect.html (running inside a session view) prefills this to retry the host.
     // The splash session has no server, hence the null guard.
     host: rec && rec.server ? (rec.server.host || '') : ''
@@ -1400,6 +1483,17 @@ ipcMain.handle('save-config', (event, newConfig) => {
   if (newConfig.servers !== undefined) store.set('servers', sanitizeServers(newConfig.servers));
   if (newConfig.cssOverrides !== undefined) store.set('cssOverrides', sanitizeOverrides(newConfig.cssOverrides));
   if (newConfig.blockedHotkeys !== undefined) store.set('blockedHotkeys', sanitizeHotkeys(newConfig.blockedHotkeys));
+  if (newConfig.media !== undefined) {
+    const next = sanitizeMedia(newConfig.media);
+    const prev = getMediaConfig();
+    store.set('media', next);
+    // Ask macOS the moment a device is switched on, not at the surprising moment
+    // the remote page reaches for it.
+    const turnedOn = [];
+    if (next.camera && !prev.camera) turnedOn.push('camera');
+    if (next.microphone && !prev.microphone) turnedOn.push('microphone');
+    if (turnedOn.length) ensureSystemMediaAccess(turnedOn);
+  }
   if (newConfig.tabs !== undefined) {
     store.set('tabs', sanitizeTabs(newConfig.tabs));
     applyTabsConfigLive(); // live-apply to every window's strip
@@ -1613,11 +1707,31 @@ app.whenReady().then(() => {
   // The remote KVM page is untrusted content. Grant it only what a KVM session
   // needs (mouse capture, fullscreen, clipboard) and deny camera, microphone,
   // geolocation, notifications, USB/HID/serial and everything else outright.
-  session.defaultSession.setPermissionRequestHandler((wc, permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => {
+    if (permission === 'media') {
+      const types = details && details.mediaTypes;
+      if (!mediaDecision(wc, types)) { callback(false); return; }
+      // Granted here, but macOS may still be holding it at the OS level.
+      const kinds = (Array.isArray(types) && types.length ? types : ['video', 'audio'])
+        .map(t => MEDIA_KINDS[t]).filter(Boolean);
+      ensureSystemMediaAccess(kinds).then(callback).catch(() => callback(false));
+      return;
+    }
     callback(ALLOWED_PERMISSIONS.has(permission));
   });
-  session.defaultSession.setPermissionCheckHandler((wc, permission) =>
-    ALLOWED_PERMISSIONS.has(permission));
+
+  // Synchronous counterpart, used by navigator.permissions.query and by
+  // Chromium's own pre-checks. It must give the same answer as above, minus the
+  // OS prompt — which cannot be awaited here.
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => {
+    if (permission === 'media') {
+      const types = [];
+      if (details && details.mediaType === 'video') types.push('video');
+      if (details && details.mediaType === 'audio') types.push('audio');
+      return mediaDecision(wc, types.length ? types : undefined);
+    }
+    return ALLOWED_PERMISSIONS.has(permission);
+  });
 
   // Set dock icon on macOS
   if (process.platform === 'darwin') {

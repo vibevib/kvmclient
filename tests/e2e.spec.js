@@ -722,6 +722,117 @@ test.describe('settings window', () => {
   });
 });
 
+// The KVM web UI passes the camera and microphone to the remote machine as a
+// virtual webcam and headset. They are grantable, but not freely: off until the
+// user asks, and even then only for the device a session is pinned to.
+test.describe('camera and microphone', () => {
+  // Drive the real permission handler the way a page would.
+  const ask = (app, kind) => evalInView(app, '127.0.0.1', `
+    navigator.mediaDevices.getUserMedia(${kind === 'video' ? '{ video: true }' : '{ audio: true }'})
+      .then(s => { s.getTracks().forEach(t => t.stop()); return 'granted'; })
+      .catch(e => 'denied:' + e.name)`);
+
+  // What navigator.permissions.query reports — the synchronous check handler.
+  const queryState = (app, name) => evalInView(app, '127.0.0.1',
+    `navigator.permissions.query({ name: '${name}' }).then(r => r.state).catch(e => 'error')`);
+
+  test('both are denied until they are turned on', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
+    try {
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(1);
+      expect(await ask(h.app, 'video')).toMatch(/^denied:/);
+      expect(await ask(h.app, 'audio')).toMatch(/^denied:/);
+      expect(await queryState(h.app, 'camera')).toBe('denied');
+      expect(await queryState(h.app, 'microphone')).toBe('denied');
+    } finally { await h.close(); }
+  });
+
+  test('turning one on does not turn the other on', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      media: { camera: false, microphone: true }
+    });
+    try {
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(1);
+      expect(await queryState(h.app, 'camera')).toBe('denied');
+      expect(await queryState(h.app, 'microphone')).toBe('granted');
+    } finally { await h.close(); }
+  });
+
+  test('the setting covers every tab and window, not just the one that asked', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      media: { camera: true, microphone: true }
+    });
+    try {
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(1);
+      await clickMenu(h.app, 'Beta');                       // a second tab
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(2);
+
+      // Ask in EVERY session view, not just the first one. Polled, because a
+      // freshly opened tab has no URL for a moment.
+      const statesIn = () => h.app.evaluate(async ({ BrowserWindow }) => {
+        const out = [];
+        for (const w of BrowserWindow.getAllWindows()) {
+          for (const v of w.contentView.children) {
+            if (!v.webContents) continue;
+            const url = v.webContents.getURL() || '';
+            if (!url.includes('127.0.0.1')) continue;
+            out.push(await v.webContents.executeJavaScript(
+              `navigator.permissions.query({ name: 'camera' }).then(r => r.state)`));
+          }
+        }
+        return out;
+      });
+      await expect.poll(async () => (await statesIn()).length, { timeout: 15000 })
+        .toBeGreaterThanOrEqual(2);
+      expect((await statesIn()).every(s => s === 'granted')).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  // The page is untrusted: being switched on is not the same as being switched
+  // on for anyone who happens to be inside the web view.
+  test('our own local pages never get the camera', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      media: { camera: true, microphone: true }
+    });
+    try {
+      await openSettings(h.app);
+      const state = await evalInWindow(h.app, 'settings.html',
+        `navigator.permissions.query({ name: 'camera' }).then(r => r.state).catch(() => 'error')`);
+      expect(state).toBe('denied');
+    } finally { await h.close(); }
+  });
+
+  test('a session parked on about:blank gets nothing', async () => {
+    const h = await launchApp({
+      servers: servers(), openSessions: [{ serverId: 'a' }],
+      media: { camera: true, microphone: true },
+      tabs: { behavior: 'suspend', showStrip: true, position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a' }, { id: 'i2', serverId: 'b' }] }
+    });
+    try {
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(1);
+      await evalInView(h.app, 'tabbar.html', 'window.tabbar.switchTab(1)');
+
+      // The suspended tab is on about:blank, which is not the device it was
+      // pinned to, so the host check must refuse it.
+      await expect.poll(() => h.app.evaluate(async ({ BrowserWindow }) => {
+        for (const w of BrowserWindow.getAllWindows()) {
+          for (const v of w.contentView.children) {
+            if (!v.webContents) continue;
+            if ((v.webContents.getURL() || '') !== 'about:blank') continue;
+            return v.webContents.executeJavaScript(
+              `navigator.permissions.query({ name: 'camera' }).then(r => r.state).catch(() => 'error')`);
+          }
+        }
+        return null;
+      }), { timeout: 15000 }).toBe('denied');
+    } finally { await h.close(); }
+  });
+});
+
 test.describe('hardening', () => {
   test('a remote page cannot read the server list or redirect the session', async () => {
     const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });

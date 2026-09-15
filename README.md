@@ -12,6 +12,8 @@ A macOS desktop wrapper around the [GL.iNet hardware KVM](https://www.gl-inet.co
 - **Live video adjustments** — a floating panel (⌥⌘C) with **white balance** (per-channel R/G/B), **brightness / contrast / saturation**, and **sharpen**, in two layers: a **Global** layer for all servers and a **This server** layer for the current tab. Changes preview live and **save automatically**.
 - **CSS overrides** — inject arbitrary CSS into the remote UI, scoped **globally or per-server**, applied instantly.
 - **Hotkey blocking** — configurable list of macOS shortcuts that get passed through to the remote instead of acting on the host.
+- **Camera / microphone passthrough** — optional, off by default: hand the remote
+  machine your camera and mic as a virtual webcam and headset.
 - **Persistent settings** and auto-reconnect / connection-error handling.
 
 ## Getting Started
@@ -132,9 +134,14 @@ as **untrusted** and confines it:
   only from a **private-network address you configured** (RFC1918, loopback,
   link-local, CGNAT or `.local`). Certificates from anywhere else are validated
   normally.
-- **Least-privilege permissions.** Only pointer-lock, fullscreen and clipboard
-  are granted; camera, microphone, geolocation, USB/HID/serial and notifications
-  are denied.
+- **Least-privilege permissions.** Pointer-lock, fullscreen and clipboard are
+  granted; geolocation, USB/HID/serial and notifications are denied outright.
+- **Camera and microphone are opt-in.** The KVM passes them to the remote
+  machine as a virtual webcam and headset, so they *can* be granted — but they
+  are off until you turn them on in **Settings → General**, and even then only
+  for the device a session is pinned to. Our own local pages never get them, and
+  neither does a suspended tab. Turning one on applies to every tab and window;
+  macOS asks for its own permission at that moment.
 - Local pages carry a strict CSP, and config coming back from Settings is
   coerced to shape before it is stored or injected.
 

@@ -368,6 +368,22 @@
       <button class="secondary" id="add-server">Add</button>
     </div>
 
+    <h2 style="margin-top: 20px;">Camera &amp; microphone</h2>
+    <p style="font-size: 12px; color: #888; margin: 0 0 8px;">The KVM passes these to the remote machine as a virtual webcam and headset. Off by default, because the KVM page is served over plain HTTP on your LAN. Granting applies to <strong style="color:#aaa;">every</strong> tab and window.</p>
+    <div class="opt-row">
+      <label class="switch">
+        <input type="checkbox" id="media-camera">
+        <span>Allow the camera</span>
+      </label>
+    </div>
+    <div class="opt-row">
+      <label class="switch">
+        <input type="checkbox" id="media-microphone">
+        <span>Allow the microphone</span>
+      </label>
+      <span class="opt-hint">macOS will ask for its own permission the first time.</span>
+    </div>
+
     <div class="shortcuts-info">
       <p><kbd>Cmd</kbd> + <kbd>`</kbd> — Quit application (always works)</p>
       <p><kbd>Cmd</kbd> + <kbd>,</kbd> — Open settings (always works)</p>
@@ -465,6 +481,7 @@
 
   <script>
     let config = {
+      media: { camera: false, microphone: false },
       servers: [],
       cssOverrides: [],
       blockedHotkeys: [],
@@ -638,6 +655,24 @@
       clearDropMarks();
     });
 
+    function populateMediaControls() {
+      if (!config.media) config.media = { camera: false, microphone: false };
+      document.getElementById('media-camera').checked = !!config.media.camera;
+      document.getElementById('media-microphone').checked = !!config.media.microphone;
+    }
+
+    // Saved immediately: turning one on is when macOS should ask for its own
+    // permission, not the moment the remote page reaches for the device.
+    function commitMedia() {
+      config.media = {
+        camera: document.getElementById('media-camera').checked,
+        microphone: document.getElementById('media-microphone').checked
+      };
+      window.kvmAPI.saveConfig(config);
+    }
+    document.getElementById('media-camera').addEventListener('change', commitMedia);
+    document.getElementById('media-microphone').addEventListener('change', commitMedia);
+
     function populateTabsControls() {
       if (!config.tabs) {
         config.tabs = { openNewInTabs: true, showStrip: true, behavior: 'keep',
@@ -675,6 +710,7 @@
       renderCSSList();
       renderHotkeysList();
       populateTabsControls();
+      populateMediaControls();
     }
 
     // Event delegation for toggles and deletes
