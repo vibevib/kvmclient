@@ -36,7 +36,15 @@ function startFakeKvm() {
       function col(dr,dg,db){
         return 'rgb('+(q.get('r')||dr)+','+(q.get('g')||dg)+','+(q.get('b')||db)+')';
       }
-      if (p.indexOf('/two') === 0) {
+      if (p.indexOf('/decoy') === 0) {
+        // Dark frame, a bright patch with blue pegged at 255, and thin light
+        // text that IS measurable but is a terrible white reference. The text
+        // must not win just for being unclipped.
+        x.fillStyle='#0e0e12'; x.fillRect(0,0,c.width,c.height);
+        x.fillStyle='rgb(200,206,255)'; x.fillRect(96,60,128,90);
+        x.fillStyle='#6a7a9a'; x.font='16px monospace';
+        x.fillText('this patch should be white', 20, 200);
+      } else if (p.indexOf('/two') === 0) {
         // A blown-out white block AND a dimmer, unclipped one that is slightly
         // blue. The clipped block scores higher on brightness, so this tells
         // apart "prefers bright" from "prefers measurable".

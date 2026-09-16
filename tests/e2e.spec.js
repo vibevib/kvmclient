@@ -1003,6 +1003,32 @@ test.describe('white point', () => {
     } finally { await h.close(); }
   });
 
+  // Found on the iPad, where auto reported rgb(14, 14, 18): thin antialiased
+  // text on a dark background produced a dim block that was technically
+  // measurable, and "prefer measurable" took it over a bright clipped patch.
+  // Worse, the winning block was then re-read as a 5x5 crop at its centre, which
+  // landed between the letters and sampled the background.
+  test('dim unclipped text does not beat a bright clipped patch', async () => {
+    const h = await launchApp({
+      servers: tinted('/decoy'), openSessions: [{ serverId: 'a' }], cssOverrides: []
+    });
+    try {
+      await waitForStream(h);
+      await clickMenu(h.app, 'Auto White Balance');
+      await expect.poll(() => !!layerFor(h, 'a'), { timeout: 15000 }).toBe(true);
+
+      const g = globalLayer(h), own = layerFor(h, 'a');
+      const eff = { r: g.r * own.r, g: g.g * own.g, b: g.b * own.b };
+      // The patch is rgb(200,206,255): mean 220, so blue comes down to ~0.864.
+      // Sampling the dark background instead gives ~0.85 from rgb(14,14,18) —
+      // close in blue, so pin red, which separates them clearly (1.10 vs 1.095
+      // is not enough). Use green: 220/206 = 1.068 vs 15.3/14 = 1.095.
+      expect(eff.b).toBeCloseTo(220 / 255, 1);
+      expect(eff.g).toBeCloseTo(220 / 206, 2);
+      expect(eff.r).toBeCloseTo(220 / 200, 2);
+    } finally { await h.close(); }
+  });
+
   test('a page with no video changes nothing', async () => {
     const h = await launchApp({
       servers: tinted('/novideo'), openSessions: [{ serverId: 'a' }], cssOverrides: []

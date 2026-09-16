@@ -169,9 +169,16 @@ to neutral*. It keeps **two** candidates: the best block that is not blown out,
 and the best block overall. A clipped block is worth less — past 255 the excess is
 gone, so the cast cannot be measured — but it is not worthless, and a picture that
 is genuinely too blue usually has blue pegged across its white areas. Refusing
-those outright failed on exactly the case the feature exists for, so the clean
-block wins when there is one and the clipped one is used, flagged, when there is
-not. The winning block is then re-read at full resolution.
+those outright failed on exactly the case the feature exists for.
+
+So the clean block wins, but **only if it is in the same league**
+(`score >= any.score * 0.6`). Without that limit a dim block of antialiased text
+beat a bright clipped patch purely for being unclipped — found on the iPad, where
+auto reported rgb(14, 14, 18) from the background behind the letters.
+
+The winning block is then re-read at full resolution over the **whole block**, not
+a 5×5 crop of its centre: a crop lands between the strokes that made the block
+bright and samples the background. 5×5 is the *manual* pick's sample size.
 
 `point` maps a viewport coordinate back through `object-fit` before sampling, or
 a click on a letterboxed stream lands somewhere else entirely.

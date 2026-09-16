@@ -1348,12 +1348,19 @@ function sampleWhiteScript(opts) {
           if(clip/n<=0.25 && score>clean.score) clean=cand;
         }
       }
-      var pick = clean.col ? clean : any;
+      // Prefer a measurable block, but not at any cost. The dim, barely-lit
+      // block that happens to be unclipped (antialiased text on a dark
+      // background, say) is a far worse white reference than a bright
+      // clipped one. Only take it if it is in the same league.
+      var pick = (clean.col && clean.score >= any.score * 0.6) ? clean : any;
       if(!pick.col) return JSON.stringify({ok:false,reason:'no usable light area on screen'});
-      // Re-read that block at full resolution, so the answer is not the
-      // downscale's averaging.
+      // Re-read that block at full resolution — the WHOLE block, not a 5x5
+      // crop of it. A 4px block of a downscale covers many source pixels,
+      // and a crop at its centre can easily land between the strokes of
+      // whatever made the block bright and report the background instead.
+      var bw=Math.max(O.size, Math.round(B*nw/w)), bh=Math.max(O.size, Math.round(B*nh/h));
       var fx=(pick.x+B/2)/w*nw, fy=(pick.y+B/2)/h*nh;
-      var a2=avgBox(fx-O.size/2, fy-O.size/2, O.size, O.size);
+      var a2=avgBox(fx-bw/2, fy-bh/2, bw, bh);
       a2.ok=true; a2.mode='auto'; a2.sourceX=Math.round(fx); a2.sourceY=Math.round(fy);
       return JSON.stringify(a2);
     } catch(e) {
