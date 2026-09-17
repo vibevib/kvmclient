@@ -120,6 +120,36 @@ npm install electron-builder --save-dev
 npx electron-builder --mac
 ```
 
+## App Icon
+
+`assets/icon.svg` is the source; `node generate-icons.js` renders everything the
+packagers want from it. `assets/icon.icns` is what electron-builder embeds, and
+main.js hands `512x512.png` to `app.dock.setIcon` and to the window.
+
+macOS does not round app icons — unlike iOS, the shape has to be in the file. The
+grid is an **824x824 body centred in a 1024 canvas** (a 100px transparent
+margin), with corners on Apple's **continuous** curve at radius 185.4. The SVG
+carries that outline as a literal path lifted from SwiftUI's
+`RoundedRectangle(cornerRadius: 185.4, style: .continuous)`, because a plain
+circular `rx` is visibly the wrong shape: the continuous corner reaches 283px
+along each edge where an arc would reach 185px.
+
+The icon before this had an 800 body and `rx="80"` — 10% where the guideline is
+22.5%. That is 0px of rounding once it is scaled to 16, 24 or 32px, which is why
+it looked square in the menu bar and lists but slightly rounded in the Dock.
+A useful check, since corner radius is hard to eyeball: the fraction of its
+bounding square the silhouette fills. Stock macOS icons and this one are both
+~95.4%; the old one was 99.1%.
+
+Stock icons also carry a soft drop shadow (it puts their full alpha bounds at
+896 rather than 824). This one does not. Mind that if you ever measure a system
+icon's bounding box to compare — threshold the alpha first or you will measure
+the shadow.
+
+The iPad app's icon is the same mark, but it must be **full-bleed and free of
+any alpha channel** — iOS applies its own mask and App Store Connect rejects
+transparency. See `leKVMpad/Tools/make-icon.py`.
+
 ## Tab Settings
 
 Four settings are **one setting each for every tab**, stored on `tabs` in the

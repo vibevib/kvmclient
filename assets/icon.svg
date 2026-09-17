@@ -1,4 +1,17 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    The macOS app icon grid: an 824x824 body centred in a 1024 canvas, leaving a
+    100px transparent margin, with the corners on Apple's *continuous* curve at
+    radius 185.4 (22.5% of the body).
+
+    macOS does not round app icons for you the way iOS does - the shape has to be
+    in the artwork. The path below is not an approximation: it is what
+    SwiftUI's RoundedRectangle(cornerRadius: 185.4, style: .continuous) draws for
+    this rect, lifted verbatim. Note how far the corner reaches along each edge
+    (to 640.586, not 738.6): that long tangent is what separates Apple's corner
+    from a plain circular arc, and it is why a quarter-circle rounding looks
+    wrong beside every other icon in the Dock.
+  -->
   <defs>
     <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#1a73e8"/>
@@ -8,18 +21,50 @@
       <stop offset="0%" style="stop-color:#4fc3f7"/>
       <stop offset="100%" style="stop-color:#29b6f6"/>
     </linearGradient>
+    <clipPath id="body">
+      <path d="M 924.000,512.000
+               L 924.000,640.586
+               C 924.000,722.194 924.000,762.997 910.111,806.921
+               C 892.656,854.878 854.878,892.656 806.921,910.111
+               C 762.997,924.000 722.194,924.000 640.586,924.000
+               L 383.414,924.000
+               C 301.806,924.000 261.003,924.000 217.079,910.111
+               C 169.122,892.656 131.344,854.878 113.889,806.921
+               C 100.000,762.997 100.000,722.194 100.000,640.586
+               L 100.000,383.414
+               C 100.000,301.806 100.000,261.003 113.889,217.079
+               C 131.344,169.122 169.122,131.344 217.079,113.889
+               C 261.003,100.000 301.806,100.000 383.414,100.000
+               L 640.586,100.000
+               C 722.194,100.000 762.997,100.000 806.921,113.889
+               C 854.878,131.344 892.656,169.122 910.111,217.079
+               C 924.000,261.003 924.000,301.806 924.000,383.414
+               Z"/>
+    </clipPath>
+    <!-- The reflection is part of the screen, so it is clipped by it rather than
+         being its own rounded box: that keeps its lower edge straight instead of
+         curling in at the ends. -->
+    <clipPath id="screen" clipPathUnits="userSpaceOnUse">
+      <rect x="60" y="60" width="680" height="560" rx="36" ry="36"/>
+    </clipPath>
   </defs>
 
-  <!-- Outer rounded rectangle (device frame) -->
-  <rect x="112" y="112" width="800" height="800" rx="80" ry="80" fill="url(#bgGradient)"/>
+  <!--
+    The mark itself is unchanged, drawn in its own 800x800 space so the numbers
+    stay the ones it was designed with; the group scales it onto the 824 body.
+    Everything is clipped by the body, so nothing has to know the corner shape.
+  -->
+  <g clip-path="url(#body)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bgGradient)"/>
 
-  <!-- Inner screen -->
-  <rect x="172" y="172" width="680" height="560" rx="20" ry="20" fill="url(#screenGradient)"/>
-
-  <!-- Screen shine/reflection -->
-  <rect x="172" y="172" width="680" height="280" rx="20" ry="20" fill="rgba(255,255,255,0.15)"/>
-
-  <!-- Stand base -->
-  <rect x="412" y="752" width="200" height="20" rx="10" ry="10" fill="#0d47a1"/>
-  <rect x="362" y="772" width="300" height="40" rx="10" ry="10" fill="#0d47a1"/>
+    <g transform="translate(100 100) scale(1.03)">
+      <!-- Screen -->
+      <rect x="60" y="60" width="680" height="560" rx="36" ry="36" fill="url(#screenGradient)"/>
+      <!-- Screen shine/reflection -->
+      <rect x="60" y="60" width="680" height="280" fill="rgba(255,255,255,0.15)" clip-path="url(#screen)"/>
+      <!-- Stand: neck and foot -->
+      <rect x="300" y="640" width="200" height="20" rx="10" ry="10" fill="#0d47a1"/>
+      <rect x="250" y="660" width="300" height="40" rx="10" ry="10" fill="#0d47a1"/>
+    </g>
+  </g>
 </svg>

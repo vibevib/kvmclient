@@ -29,11 +29,15 @@ npm run build      # build an unsigned macOS .dmg
 
 `npm run build` outputs to `dist/` (e.g. `dist/KVM-1.0.0-arm64.dmg` and `dist/mac-arm64/KVM.app`). The build is **unsigned**, so on first launch macOS Gatekeeper will warn — right-click the app → **Open** once, or **System Settings → Privacy & Security → Open Anyway**.
 
-To regenerate app icons after changing `assets/icon.png`:
+To regenerate the app icons after changing `assets/icon.svg`:
 
 ```bash
 node generate-icons.js
 ```
+
+That writes the PNG ladder, `icon.icns` and `icon.ico` from the one SVG. The
+`.icns` step needs `iconutil`, so it only runs on macOS; everything else works
+anywhere.
 
 ## Tests
 
