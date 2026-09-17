@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "KVM client",
   "main": "main.js",
-  "productName": "KVM",
+  "productName": "leKVM",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder --mac",
@@ -11,15 +11,15 @@
   },
   "build": {
     "appId": "com.kvm.app",
-    "productName": "KVM",
+    "productName": "leKVM",
     "mac": {
       "category": "public.app-category.utilities",
       "target": "dmg",
       "icon": "assets/icons/icon.icns",
       "identity": null,
       "extendInfo": {
-        "NSCameraUsageDescription": "KVM passes your camera to the remote machine as a virtual webcam, when you turn that on in Settings.",
-        "NSMicrophoneUsageDescription": "KVM passes your microphone to the remote machine as a virtual headset, when you turn that on in Settings."
+        "NSCameraUsageDescription": "leKVM passes your camera to the remote machine as a virtual webcam, when you turn that on in Settings.",
+        "NSMicrophoneUsageDescription": "leKVM passes your microphone to the remote machine as a virtual headset, when you turn that on in Settings."
       }
     }
   },

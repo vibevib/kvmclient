@@ -1,7 +1,7 @@
-# KVM Architecture
+# leKVM Architecture
 
 ## Overview
-KVM - macOS Electron app that displays remote browser session at 192.168.1.100, intercepts system hotkeys, and supports custom CSS injection.
+leKVM - macOS Electron app that displays remote browser session at 192.168.1.100, intercepts system hotkeys, and supports custom CSS injection.
 
 ## Tech Stack
 - **Electron** (v44+)
@@ -12,7 +12,7 @@ KVM - macOS Electron app that displays remote browser session at 192.168.1.100, 
 ### 1. Main Process (`main.js`)
 - Create frameless BrowserWindow
 - Register `before-input-event` handler to intercept hotkeys
-- Load config from `~/Library/Application Support/KVM/config.json`
+- Load config from `~/Library/Application Support/leKVM/config.json`
 - Block app quit except on cmd+`
 
 ### 2. WebContentsView
@@ -21,7 +21,7 @@ KVM - macOS Electron app that displays remote browser session at 192.168.1.100, 
 - CSS injected via `webContents.insertCSS()` on `did-finish-load`
 
 ### 3. Config (electron-store)
-Location: `~/Library/Application Support/KVM/config.json` (macOS)
+Location: `~/Library/Application Support/leKVM/config.json` (macOS)
 ```json
 {
   "host": "http://192.168.1.100",
@@ -76,7 +76,7 @@ kvm/
 4. `webContents.insertCSS(config.customCSS)`
 
 ## Settings Access
-- **Quick:** Edit `~/Library/Application Support/KVM/config.json` directly (macOS)
+- **Quick:** Edit `~/Library/Application Support/leKVM/config.json` directly (macOS)
   - Hand-edited config is read defensively. A malformed `blockedHotkeys` row used
     to throw inside `createMenu()`, leaving the app on Electron's **default** menu
     for the rest of the session — no Connections or Tabs, and a `Cmd+Q` bound to

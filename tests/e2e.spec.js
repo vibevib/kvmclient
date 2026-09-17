@@ -8,6 +8,10 @@ const {
   menuTopLevel, menuAccelerators, waitForMenuItem
 } = require('./helpers');
 
+// The Quit item is named after the app, so read the name rather than spelling
+// it out — renaming the product should not fail a test about Cmd+Q.
+const { productName } = require('../package.json');
+
 let kvm;
 test.beforeAll(async () => { kvm = await startFakeKvm(); });
 test.afterAll(async () => { await kvm.close(); });
@@ -528,7 +532,7 @@ test.describe('application menu', () => {
       blockedHotkeys: [{ meta: true, description: 'broken', enabled: true }]
     });
     try {
-      expect(await menuAccelerator(h.app, 'Quit KVM')).toBe('Cmd+`');
+      expect(await menuAccelerator(h.app, `Quit ${productName}`)).toBe('Cmd+`');
       const accels = await menuAccelerators(h.app);
       expect(accels.filter(a => /\+Q$/i.test(a))).toEqual([]);
     } finally { await h.close(); }

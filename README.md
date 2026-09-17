@@ -1,4 +1,4 @@
-# KVM
+# leKVM
 
 > **Warning:** This is fully vibecoded shitty code.
 
@@ -27,7 +27,7 @@ npm start          # run in development
 npm run build      # build an unsigned macOS .dmg
 ```
 
-`npm run build` outputs to `dist/` (e.g. `dist/KVM-1.0.0-arm64.dmg` and `dist/mac-arm64/KVM.app`). The build is **unsigned**, so on first launch macOS Gatekeeper will warn — right-click the app → **Open** once, or **System Settings → Privacy & Security → Open Anyway**.
+`npm run build` outputs to `dist/` (e.g. `dist/leKVM-1.0.0-arm64.dmg` and `dist/mac-arm64/leKVM.app`). The build is **unsigned**, so on first launch macOS Gatekeeper will warn — right-click the app → **Open** once, or **System Settings → Privacy & Security → Open Anyway**.
 
 To regenerate the app icons after changing `assets/icon.svg`:
 
@@ -189,7 +189,7 @@ The macOS build is **unsigned** — see *Getting Started* for the Gatekeeper pro
 
 ## Configuration
 
-Settings are stored in `~/Library/Application Support/KVM/config.json`.
+Settings are stored in `~/Library/Application Support/leKVM/config.json`.
 
 ## License
 
