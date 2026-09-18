@@ -5,12 +5,23 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'">
   <title>Sessions</title>
   <style>
+    /* Same palette as Settings; Appearance drives prefers-color-scheme. */
+    :root {
+      --bg: #ffffff; --sunken: #f6f7f8; --line: #dfe3e8;
+      --ink: #1b1f23; --ink-2: #57606a; --ink-3: #8b949e;
+      --on-ink: #ffffff; --ok: #1a7f37; --warn: #9a6700;
+    }
+    :root[data-theme="dark"] {
+        --bg: #0f0f0f; --sunken: #1b1b1b; --line: #2c2c2c;
+        --ink: #e6e6e6; --ink-2: #b0b0b0; --ink-3: #7a7a7a;
+        --on-ink: #161616; --ok: #7ee787; --warn: #e0a458;
+      }
     * { box-sizing: border-box; }
     html, body { height: 100%; }
     body {
       margin: 0;
-      background: #0b0b0b;
-      color: #e0e0e0;
+      background: var(--bg);
+      color: var(--ink);
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       user-select: none;
       -webkit-user-select: none;
@@ -43,10 +54,10 @@
       align-items: center;
       justify-content: center;
       gap: 2px;
-      border: 1px solid #2a2a2a;
+      border: 1px solid var(--line);
       border-radius: 10px;
-      background: #1b1b1b;
-      color: #ccc;
+      background: var(--sunken);
+      color: var(--ink-2);
       cursor: pointer;
       padding: 8px 4px;
       transition: background 0.12s, border-color 0.12s, opacity 0.12s;
@@ -54,7 +65,7 @@
     }
     body.pos-left .tab, body.pos-right .tab { width: 100%; min-height: 54px; }
     body.pos-top .tab, body.pos-bottom .tab { height: 100%; min-width: 76px; }
-    .tab:hover { background: #262626; border-color: #3a3a3a; }
+    .tab:hover { border-color: var(--ink-3); }
     .tab .num {
       font-size: 15px;
       max-width: 100%;
@@ -67,7 +78,7 @@
     }
     .tab .name {
       font-size: 10px;
-      color: #999;
+      color: var(--ink-3);
       max-width: 100%;
       white-space: nowrap;
       overflow: hidden;
@@ -75,31 +86,28 @@
       text-align: center;
     }
     .tab.active {
-      background: #0a5bd6;
-      border-color: #2b7cff;
-      color: #fff;
+      background: var(--ink);
+      border-color: var(--ink);
+      color: var(--on-ink);
     }
-    .tab.active .name { color: #dfe9ff; }
+    .tab.active .name { color: var(--on-ink); opacity: 0.75; }
     .tab.idle { opacity: 0.55; border-style: dashed; }
     .tab.suspended { opacity: 0.55; }
     .tab .badge {
       font-size: 9px;
       line-height: 1;
       min-height: 9px;
-      color: #7ee787; /* connected dot color */
+      color: var(--ok); /* connected */
     }
-    .tab.suspended .badge { color: #e0a458; }
-    .gear {
-      flex: 0 0 auto;
-      display: flex; align-items: center; justify-content: center;
-      border: none; background: none; color: #666; cursor: pointer;
-      font-size: 18px; border-radius: 8px; padding: 6px;
-    }
-    body.pos-left .gear, body.pos-right .gear { width: 100%; min-height: 40px; }
-    body.pos-top .gear, body.pos-bottom .gear { height: 100%; min-width: 44px; }
-    .gear:hover { color: #ccc; background: #1b1b1b; }
-    .empty { color: #555; font-size: 11px; padding: 10px; text-align: center; }
+    .tab.suspended .badge { color: var(--warn); }
+    .empty { color: var(--ink-3); font-size: 11px; padding: 10px; text-align: center; }
   </style>
+  <script>
+    // Stamp the theme before the first paint, so a dark window never flashes
+    // white. See broadcastTheme() in main.js for why [data-theme] and not
+    // prefers-color-scheme.
+    try { document.documentElement.dataset.theme = window.tabbar.theme; } catch (e) {}
+  </script>
 </head>
 <body>
   <div id="tabs"></div>
@@ -119,10 +127,10 @@
       if (!state) return;
       document.body.className = 'pos-' + (state.position || 'right');
       // Over content → transparent strip (buttons float); own area → solid sidebar
-      document.body.style.background = state.overlay ? 'transparent' : '#0b0b0b';
+      document.body.style.background = state.overlay ? 'transparent' : '';
       let html = '';
       if (!state.tabs.length) {
-        html += '<div class="empty">No tabs<br>configured</div>';
+        html += '<div class="empty">No tabs</div>';
       }
       state.tabs.forEach(t => {
         const cls = ['tab'];
@@ -138,18 +146,27 @@
           <span class="badge">${badge}</span>
         </button>`;
       });
-      html += '<button class="gear" id="gear" title="Configure tabs">⚙</button>';
       root.innerHTML = html;
     }
 
     root.addEventListener('click', (e) => {
       const tab = e.target.closest('.tab');
-      if (tab) { window.tabbar.switchTab(parseInt(tab.dataset.i, 10)); return; }
-      if (e.target.closest('#gear')) window.tabbar.openSettings();
+      if (tab) window.tabbar.switchTab(parseInt(tab.dataset.i, 10));
+    });
+
+    // Right-click a tab to close it. The menu itself is built in the main
+    // process — this page is sandboxed and has no Menu of its own.
+    root.addEventListener('contextmenu', (e) => {
+      const tab = e.target.closest('.tab');
+      if (!tab) return;
+      e.preventDefault();
+      window.tabbar.contextMenu(parseInt(tab.dataset.i, 10));
     });
 
     window.tabbar.onState((s) => { state = s; render(); });
     window.tabbar.getState().then((s) => { state = s; render(); });
+
+    window.tabbar.onTheme((t) => { document.documentElement.dataset.theme = t; });
   </script>
 </body>
 </html>

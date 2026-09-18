@@ -5,170 +5,226 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'">
   <title>Connect</title>
   <style>
-    * {
-      box-sizing: border-box;
+    /* Same palette as Settings. Appearance drives prefers-color-scheme through
+       nativeTheme.themeSource; the CSP here allows inline styles only, so the
+       two blocks are repeated rather than linked. */
+    :root {
+      --bg: #ffffff;
+      --sunken: #f6f7f8;
+      --hover: rgba(27, 31, 35, 0.06);
+      --line: #dfe3e8;
+      --ink: #1b1f23;
+      --ink-2: #57606a;
+      --ink-3: #8b949e;
+      --on-ink: #ffffff;
+      --danger: #b42318;
+      --danger-bg: #fdf2f1;
+      --radius: 8px;
     }
+    :root[data-theme="dark"] {
+        --bg: #161616;
+        --sunken: #1e1e1e;
+        --hover: rgba(255, 255, 255, 0.07);
+        --line: #2c2c2c;
+        --ink: #e6e6e6;
+        --ink-2: #a6a6a6;
+        --ink-3: #6f6f6f;
+        --on-ink: #161616;
+        --danger: #ff6b6b;
+        --danger-bg: #2a1b1b;
+      }
+
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #161616;
-      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--ink);
       margin: 0;
       height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
     }
-    .container {
-      text-align: center;
-      max-width: 420px;
-      padding: 40px;
-    }
-    h1 {
-      font-size: 20px;
-      font-weight: 600;
-      color: #fff;
-      margin-bottom: 8px;
-      letter-spacing: -0.3px;
-    }
+    .container { text-align: center; max-width: 420px; padding: 40px; }
+    h1 { font-size: 18px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+
     .error-message {
-      color: #ff6b6b;
-      font-size: 13px;
+      color: var(--danger);
+      background: var(--danger-bg);
+      border: 1px solid var(--line);
       margin-bottom: 24px;
       padding: 10px 14px;
-      background: rgba(255, 107, 107, 0.1);
-      border-radius: 8px;
+      border-radius: var(--radius);
       display: none;
       white-space: pre-line;
     }
-    .error-message.visible {
-      display: block;
-    }
-    .subtitle {
-      color: #666;
-      font-size: 14px;
-      margin-bottom: 24px;
-    }
-    .input-group {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 24px;
-    }
+    .error-message.visible { display: block; }
+    .subtitle { color: var(--ink-2); margin: 0 0 24px; }
+
+    .input-group { display: flex; gap: 8px; margin-bottom: 24px; }
     input[type="text"] {
       flex: 1;
-      padding: 12px 14px;
-      border: none;
-      border-radius: 10px;
-      background: #252525;
-      color: #e0e0e0;
-      font-size: 14px;
-      transition: background 0.15s;
+      font-family: inherit;
+      font-size: 13px;
+      padding: 0 12px;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--bg);
+      color: var(--ink);
     }
-    input[type="text"]:hover {
-      background: #2a2a2a;
-    }
-    input:focus {
-      outline: none;
-      background: #2d2d2d;
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
-    }
+    input[type="text"]:hover { border-color: var(--ink-3); }
+    input:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 2px var(--hover); }
+    input[type="checkbox"] { accent-color: var(--ink); }
+
     button {
-      padding: 12px 20px;
-      border: none;
-      border-radius: 10px;
-      font-size: 14px;
+      font-family: inherit;
+      font-size: 13px;
+      height: 36px;
+      padding: 0 16px;
+      border: 1px solid var(--ink);
+      border-radius: var(--radius);
       cursor: pointer;
-      background: #007aff;
-      color: white;
+      background: var(--ink);
+      color: var(--on-ink);
       font-weight: 500;
-      transition: background 0.15s;
     }
-    button:hover {
-      background: #0066d6;
-    }
+    button:hover { opacity: 0.85; }
     button:disabled {
-      background: #333;
-      color: #666;
-      cursor: not-allowed;
+      background: var(--sunken); border-color: var(--line);
+      color: var(--ink-3); cursor: not-allowed; opacity: 1;
     }
-    .hint {
-      color: #555;
-      font-size: 12px;
-    }
-    .hint a { color: #6cb6ff; text-decoration: none; cursor: pointer; }
-    .hint a:hover { text-decoration: underline; }
-    kbd {
-      background: #2a2a2a;
-      padding: 3px 7px;
-      border-radius: 5px;
-      font-family: 'SF Mono', monospace;
-      font-size: 11px;
-    }
+
+    .hint { color: var(--ink-3); margin: 0; }
+    .hint a { color: var(--ink-2); text-decoration: underline; cursor: pointer; }
+    .hint a:hover { color: var(--ink); }
+
     .server-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      margin-bottom: 14px;
-      text-align: left;
-      max-height: 240px;
-      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 6px;
+      margin-bottom: 14px; text-align: left; max-height: 240px; overflow-y: auto;
     }
     .server-item {
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      display: flex; align-items: center; gap: 12px;
       padding: 10px 12px;
-      background: #1f1f1f;
-      border-radius: 10px;
+      background: var(--sunken);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
       cursor: pointer;
-      transition: background 0.12s;
     }
-    .server-item:hover { background: #262626; }
-    .server-item input[type="checkbox"] {
-      width: 16px; height: 16px; accent-color: #007aff; flex-shrink: 0; cursor: pointer;
-    }
+    .server-item:hover { border-color: var(--ink-3); }
+    .server-item input[type="checkbox"],
+    .opt input[type="checkbox"] { width: 15px; height: 15px; flex-shrink: 0; cursor: pointer; }
     .server-item .info { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-    .server-item .name { font-size: 13px; color: #e0e0e0; font-weight: 500; }
+    .server-item .name { color: var(--ink); font-weight: 500; }
     .server-item .host {
-      font-size: 11px; color: #666; font-family: 'SF Mono', monospace;
+      color: var(--ink-2);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+
     .primary-btn {
-      width: 100%; padding: 12px; background: #007aff; color: #fff;
-      border: none; border-radius: 10px; font-size: 14px; font-weight: 500; cursor: pointer;
-      transition: background 0.15s;
+      width: 100%; height: 38px; padding: 0 12px;
+      background: var(--ink); border: 1px solid var(--ink); color: var(--on-ink);
+      border-radius: var(--radius); font-size: 13px; font-weight: 500; cursor: pointer;
     }
-    .primary-btn:hover { background: #0066d6; }
-    .primary-btn:disabled { background: #2a2a2a; color: #666; cursor: not-allowed; }
+    .primary-btn:hover { opacity: 0.85; }
+    .primary-btn:disabled {
+      background: var(--sunken); border-color: var(--line);
+      color: var(--ink-3); cursor: not-allowed; opacity: 1;
+    }
+
     .divider {
       display: flex; align-items: center; text-align: center;
-      color: #555; font-size: 12px; margin: 18px 0;
+      color: var(--ink-3); margin: 18px 0;
     }
-    .divider::before, .divider::after {
-      content: ''; flex: 1; height: 1px; background: #2a2a2a;
-    }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
     .divider span { padding: 0 12px; }
+
+    /* First run: name + address, then the switches. Wider than the picker,
+       because an address needs room to be read back and checked. */
+    body.setup .container { max-width: 560px; }
+    .setup-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .setup-row { display: flex; gap: 8px; align-items: center; }
+    .setup-row .s-name { flex: 0 0 30%; }
+    .setup-row .s-host { flex: 1; min-width: 0; }
+    .setup-row .row-x {
+      flex: 0 0 auto; width: 32px; padding: 0;
+      background: none; border-color: transparent; color: var(--ink-3);
+      font-size: 16px; line-height: 1;
+    }
+    .setup-row .row-x:hover { background: var(--hover); color: var(--ink); opacity: 1; }
+    .link-btn {
+      background: none; border-color: transparent; color: var(--ink-2);
+      height: auto; padding: 6px 0; font-weight: 400;
+    }
+    .link-btn:hover { background: none; color: var(--ink); text-decoration: underline; opacity: 1; }
+    .opts { display: flex; flex-direction: column; gap: 4px; text-align: left; margin: 14px 0 18px; }
+    /* Switches, not a list of things to choose between — so no card and no fill
+       behind them. The server picker above keeps both, because there the row IS
+       the thing you are clicking. */
+    .opt {
+      display: flex; align-items: flex-start; gap: 12px;
+      padding: 5px 2px;
+      cursor: pointer;
+    }
+    .opt input[type="checkbox"] { margin-top: 2px; }
+    .opt strong { display: block; font-weight: 500; color: var(--ink); }
+    .opt small { display: block; font-size: 13px; color: var(--ink-3); margin-top: 2px; }
   </style>
+  <script>
+    // Stamp the theme before the first paint, so a dark window never flashes
+    // white. See broadcastTheme() in main.js for why [data-theme] and not
+    // prefers-color-scheme.
+    try { document.documentElement.dataset.theme = window.kvmAPI.theme; } catch (e) {}
+  </script>
 </head>
 <body>
   <div class="container">
     <h1 id="app-title">Remote Connection</h1>
     <p class="error-message" id="error"></p>
 
-    <div id="servers-section">
-      <p class="subtitle">Select one or more servers to open</p>
-      <div class="server-list" id="server-list"></div>
-      <button id="open-selected" class="primary-btn" disabled>Open Selected</button>
+    <!-- First run: no servers yet. -->
+    <div id="setup-section" style="display:none;">
+      <p class="subtitle">Add the KVM you want to reach. The name is yours to pick; the address is the box on your network.</p>
+      <div class="setup-rows" id="setup-rows"></div>
+      <button type="button" class="link-btn" id="add-more">＋ Add more</button>
+
+      <div class="opts">
+        <label class="opt" id="opt-tabs" style="display:none;">
+          <input type="checkbox" id="use-tabs" checked>
+          <span><strong>Use tabs</strong><small>Every connection opens as a tab in one window.</small></span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="enable-mic" checked>
+          <span><strong>Enable mic</strong><small>Passes your microphone through as a virtual headset.</small></span>
+        </label>
+        <label class="opt">
+          <input type="checkbox" id="enable-camera" checked>
+          <span><strong>Enable camera</strong><small>Passes your camera through as a virtual webcam.</small></span>
+        </label>
+      </div>
+
+      <button id="setup-done" class="primary-btn" disabled>Open</button>
+      <p class="hint">All of this can be changed later in Settings.</p>
     </div>
 
-    <p class="subtitle" id="empty-note" style="display:none;">No servers yet — add one, or connect manually below.</p>
+    <!-- Every run after that: pick from what is configured. -->
+    <div id="pick-section" style="display:none;">
+      <div id="servers-section">
+        <p class="subtitle">Select one or more servers to open</p>
+        <div class="server-list" id="server-list"></div>
+        <button id="open-selected" class="primary-btn" disabled>Open Selected</button>
+      </div>
 
-    <div class="divider" id="divider"><span>or connect manually</span></div>
+      <div class="divider" id="divider"><span>or connect manually</span></div>
 
-    <div class="input-group">
-      <input type="text" id="host" placeholder="http://192.168.1.100">
-      <button id="connect">Connect</button>
+      <div class="input-group">
+        <input type="text" id="host" placeholder="http://192.168.1.100">
+        <button id="connect">Connect</button>
+      </div>
+      <p class="hint"><a href="#" id="open-settings-link">＋ Add or manage servers</a></p>
     </div>
-    <p class="hint"><a href="#" id="open-settings-link">＋ Add or manage servers</a></p>
   </div>
 
   <script>
@@ -176,8 +232,6 @@
     const connectBtn = document.getElementById('connect');
     const errorEl = document.getElementById('error');
     const serverListEl = document.getElementById('server-list');
-    const serversSection = document.getElementById('servers-section');
-    const dividerEl = document.getElementById('divider');
     const openSelectedBtn = document.getElementById('open-selected');
 
     // Escapes quotes too — these results are interpolated into attribute values.
@@ -193,16 +247,18 @@
       document.title = appName;
     });
 
-    // Load configured servers + the current host
+    // Load configured servers + the current host. With none configured this is a
+    // first run, and the screen is a setup form instead of a picker.
     window.kvmAPI.getConfig().then(config => {
       hostInput.value = config.host || '';
       const servers = config.servers || [];
       if (!servers.length) {
-        serversSection.style.display = 'none';
-        dividerEl.style.display = 'none';
-        document.getElementById('empty-note').style.display = 'block';
+        document.body.classList.add('setup');
+        document.getElementById('setup-section').style.display = 'block';
+        addSetupRow();
         return;
       }
+      document.getElementById('pick-section').style.display = 'block';
       serverListEl.innerHTML = servers.map(s => `
         <label class="server-item">
           <input type="checkbox" value="${escapeHtml(s.id)}">
@@ -262,6 +318,70 @@
       e.preventDefault();
       window.kvmAPI.openSettings();
     });
+
+    // ---- First-run setup ----------------------------------------------------
+
+    const setupRows = document.getElementById('setup-rows');
+    const setupDone = document.getElementById('setup-done');
+
+    function setupServers() {
+      return [...setupRows.querySelectorAll('.setup-row')]
+        .map(r => ({
+          name: r.querySelector('.s-name').value.trim(),
+          host: r.querySelector('.s-host').value.trim()
+        }))
+        // A name without an address is not a server; blank rows are just ignored.
+        .filter(s => s.host);
+    }
+
+    function refreshSetup() {
+      const rows = setupRows.querySelectorAll('.setup-row');
+      // Removing a row only makes sense once there is more than one.
+      rows.forEach(r => { r.querySelector('.row-x').style.visibility = rows.length > 1 ? '' : 'hidden'; });
+      // Tabs are a choice only when there is something to put in them.
+      document.getElementById('opt-tabs').style.display = rows.length > 1 ? '' : 'none';
+      setupDone.disabled = setupServers().length === 0;
+    }
+
+    function addSetupRow() {
+      const row = document.createElement('div');
+      row.className = 'setup-row';
+      row.innerHTML = '<input type="text" class="s-name" placeholder="Name" maxlength="200">'
+        + '<input type="text" class="s-host" placeholder="http://192.168.1.100" maxlength="500">'
+        + '<button type="button" class="row-x" title="Remove">&times;</button>';
+      setupRows.appendChild(row);
+      refreshSetup();
+      row.querySelector('.s-name').focus();
+    }
+
+    document.getElementById('add-more').addEventListener('click', addSetupRow);
+    setupRows.addEventListener('input', refreshSetup);
+    setupRows.addEventListener('click', (e) => {
+      const x = e.target.closest('.row-x');
+      if (!x) return;
+      if (setupRows.querySelectorAll('.setup-row').length > 1) x.closest('.setup-row').remove();
+      refreshSetup();
+    });
+    setupRows.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !setupDone.disabled) finishSetup();
+    });
+
+    function finishSetup() {
+      const servers = setupServers();
+      if (!servers.length) return;
+      setupDone.disabled = true;
+      setupDone.textContent = 'Opening…';
+      window.kvmAPI.setupComplete({
+        servers,
+        useTabs: document.getElementById('use-tabs').checked,
+        microphone: document.getElementById('enable-mic').checked,
+        camera: document.getElementById('enable-camera').checked
+      });
+    }
+
+    setupDone.addEventListener('click', finishSetup);
+
+    window.kvmAPI.onTheme((t) => { document.documentElement.dataset.theme = t; });
   </script>
 </body>
 </html>

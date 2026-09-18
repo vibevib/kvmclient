@@ -332,6 +332,279 @@ test.describe('tab settings', () => {
   });
 });
 
+test.describe('closing tabs', () => {
+  const stripState = (app) => evalInView(app, 'tabbar.html', 'window.tabbar.getState()');
+  const sessionWindows = async (h) => (await windowsInfo(h.app)).filter(w => !w.url).length;
+
+  // The overlay is attached a moment after the window; polling getState() before
+  // that gets null, not an empty strip.
+  const waitForStrip = async (h) => {
+    await expect.poll(async () => {
+      const w = (await windowsInfo(h.app))[0];
+      return !!w && w.views.some(u => u.includes('tabbar.html'));
+    }, { timeout: 15000 }).toBe(true);
+  };
+
+  const twoTabs = () => ({
+    servers: servers(),
+    openSessions: [{ serverId: 'a' }],
+    tabs: { showStrip: true, position: 'right', overlay: true, size: 76,
+            items: [{ id: 'i1', serverId: 'a', label: 'One' },
+                    { id: 'i2', serverId: 'b', label: 'Two' }] }
+  });
+
+  test('the strip has no settings button', async () => {
+    const h = await launchApp(twoTabs());
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(2);
+      // Tabs are configured in Settings; the strip is for switching, nothing else.
+      expect(await evalInView(h.app, 'tabbar.html',
+        'document.querySelectorAll(".gear, #gear").length')).toBe(0);
+    } finally { await h.close(); }
+  });
+
+  test('Close Tab takes the row and the session with it', async () => {
+    const h = await launchApp(twoTabs());
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(2);
+      await clickMenu(h.app, 'Close Tab');
+
+      // The button is gone because the ROW is gone — not merely disconnected.
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(1);
+      expect(h.readConfig().tabs.items.map(i => i.label)).toEqual(['Two']);
+      expect(await sessionWindows(h)).toBe(1);
+    } finally { await h.close(); }
+  });
+
+  test('closing the last tab leaves the window on the splash, not on nothing', async () => {
+    const h = await launchApp({
+      servers: servers(),
+      openSessions: [{ serverId: 'a' }],
+      tabs: { showStrip: true, position: 'right', overlay: true, size: 76,
+              items: [{ id: 'i1', serverId: 'a', label: 'Only' }] }
+    });
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(1);
+      await clickMenu(h.app, 'Close Tab');
+
+      await expect.poll(() => sessionUrls(h.app), { timeout: 15000 })
+        .toEqual(expect.arrayContaining([expect.stringContaining('connect.html')]));
+      expect(await sessionWindows(h)).toBe(1);
+
+      // And "use tabs" still means one window: the next server joins this one.
+      await clickMenu(h.app, 'Beta');
+      await expect.poll(async () => (await sessionUrls(h.app)).some(u => u.includes('127.0.0.1')),
+        { timeout: 15000 }).toBe(true);
+      expect(await sessionWindows(h)).toBe(1);
+    } finally { await h.close(); }
+  });
+
+  test('Disconnect drops the stream but keeps the tab', async () => {
+    const h = await launchApp(twoTabs());
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(2);
+      await expect.poll(async () => (await stripState(h.app)).tabs[0].connected, { timeout: 15000 }).toBe(true);
+
+      await clickMenu(h.app, 'Disconnect Tab');
+
+      // The tab is still there, and the row with it — only the connection went.
+      const state = await stripState(h.app);
+      expect(state.tabs.length).toBe(2);
+      expect(state.tabs[0].suspended).toBe(true);
+      expect(state.tabs[0].connected).toBe(false);
+      expect(h.readConfig().tabs.items.map(i => i.label)).toEqual(['One', 'Two']);
+      expect((await sessionUrls(h.app)).some(u => u.startsWith('about:blank'))).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  // The reported bug: deleting the rows left a button per open session, because
+  // winTabEntries re-adopted the orphaned sessions as ad-hoc tabs.
+  test('deleting every row in Settings leaves no buttons behind', async () => {
+    const h = await launchApp(twoTabs());
+    try {
+      await waitForStrip(h);
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(2);
+      // Open the second one too, so there are two live sessions to orphan.
+      await clickMenu(h.app, 'Two — Beta');
+      await expect.poll(async () => (await sessionUrls(h.app)).length, { timeout: 15000 }).toBe(2);
+
+      await openSettings(h.app);
+      await evalInWindow(h.app, 'settings.html',
+        'window.kvmAPI.updateTabs({ showStrip: true, position: "right", overlay: true, size: 76, items: [] })');
+
+      await expect.poll(async () => (await stripState(h.app)).tabs.length, { timeout: 15000 }).toBe(0);
+      await expect.poll(async () => (await sessionUrls(h.app)).filter(u => u.includes('127.0.0.1')).length,
+        { timeout: 15000 }).toBe(0);
+    } finally { await h.close(); }
+  });
+});
+
+test.describe('appearance', () => {
+  const themeSource = (app) => app.evaluate(({ nativeTheme }) => nativeTheme.themeSource);
+
+  test('defaults to following macOS', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
+    try {
+      await expect.poll(() => themeSource(h.app), { timeout: 15000 }).toBe('system');
+    } finally { await h.close(); }
+  });
+
+  test('a saved choice is applied at launch', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }], appearance: 'light' });
+    try {
+      await expect.poll(() => themeSource(h.app), { timeout: 15000 }).toBe('light');
+    } finally { await h.close(); }
+  });
+
+  test('changing it takes effect without a restart, and is written down', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }] });
+    try {
+      await openSettings(h.app);
+      await evalInWindow(h.app, 'settings.html', `(function(){
+        var sel = document.getElementById('appearance');
+        sel.value = 'dark';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+      await expect.poll(() => themeSource(h.app), { timeout: 15000 }).toBe('dark');
+      await expect.poll(() => h.readConfig().appearance, { timeout: 15000 }).toBe('dark');
+    } finally { await h.close(); }
+  });
+
+  test('a value that is not one of the three falls back to auto', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }], appearance: 'chartreuse' });
+    try {
+      await expect.poll(() => themeSource(h.app), { timeout: 15000 }).toBe('system');
+    } finally { await h.close(); }
+  });
+
+  // Setting nativeTheme.themeSource alone does NOT reach the renderer here —
+  // prefers-color-scheme stays light even on a brand-new window. So assert on
+  // what the page actually paints, not on the main-process flag.
+  for (const [mode, bg] of [['dark', '#161616'], ['light', '#ffffff']]) {
+    test(`the pages actually paint ${mode}`, async () => {
+      const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }], appearance: mode });
+      try {
+        await openSettings(h.app);
+        expect(await evalInWindow(h.app, 'settings.html',
+          'document.documentElement.dataset.theme')).toBe(mode);
+        expect(await evalInWindow(h.app, 'settings.html',
+          'getComputedStyle(document.documentElement).getPropertyValue("--bg").trim()')).toBe(bg);
+        expect(await evalInWindow(h.app, 'settings.html',
+          'getComputedStyle(document.body).backgroundColor')).toBe(
+            mode === 'dark' ? 'rgb(22, 22, 22)' : 'rgb(255, 255, 255)');
+      } finally { await h.close(); }
+    });
+  }
+
+  test('switching repaints the open windows without reopening them', async () => {
+    const h = await launchApp({ servers: servers(), openSessions: [{ serverId: 'a' }], appearance: 'light' });
+    try {
+      await openSettings(h.app);
+      expect(await evalInWindow(h.app, 'settings.html', 'document.documentElement.dataset.theme')).toBe('light');
+
+      await evalInWindow(h.app, 'settings.html', `(function(){
+        var sel = document.getElementById('appearance');
+        sel.value = 'dark';
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      })()`);
+
+      await expect.poll(() => evalInWindow(h.app, 'settings.html',
+        'getComputedStyle(document.body).backgroundColor'), { timeout: 15000 }).toBe('rgb(22, 22, 22)');
+    } finally { await h.close(); }
+  });
+});
+
+test.describe('first run', () => {
+  const setupEl = (app, js) => evalInView(app, 'connect.html', js);
+
+  const waitForSetup = async (h) => {
+    await expect.poll(() => setupEl(h.app, 'document.getElementById("setup-section").style.display'),
+      { timeout: 15000 }).toBe('block');
+  };
+
+  test('with no servers the screen asks for one, instead of showing an empty picker', async () => {
+    const h = await launchApp({ servers: [], openSessions: [] });
+    try {
+      await waitForSetup(h);
+      expect(await setupEl(h.app, 'document.getElementById("pick-section").style.display')).toBe('none');
+      expect(await setupEl(h.app, 'document.querySelectorAll("#setup-rows .setup-row").length')).toBe(1);
+      // Nothing to open yet.
+      expect(await setupEl(h.app, 'document.getElementById("setup-done").disabled')).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  test('the tabs choice appears only once there is more than one server', async () => {
+    const h = await launchApp({ servers: [], openSessions: [] });
+    try {
+      await waitForSetup(h);
+      // One server cannot be "in tabs only" in any meaningful sense.
+      expect(await setupEl(h.app, 'document.getElementById("opt-tabs").style.display')).toBe('none');
+
+      await setupEl(h.app, 'document.getElementById("add-more").click()');
+      expect(await setupEl(h.app, 'document.querySelectorAll("#setup-rows .setup-row").length')).toBe(2);
+      expect(await setupEl(h.app, 'document.getElementById("opt-tabs").style.display')).not.toBe('none');
+      // All three start ticked.
+      expect(await setupEl(h.app,
+        '[...document.querySelectorAll("#use-tabs,#enable-mic,#enable-camera")].every(c => c.checked)')).toBe(true);
+    } finally { await h.close(); }
+  });
+
+  test('finishing setup saves the servers and opens them', async () => {
+    const h = await launchApp({ servers: [], openSessions: [] });
+    try {
+      await waitForSetup(h);
+      await setupEl(h.app, 'document.getElementById("add-more").click()');
+      await setupEl(h.app, `
+        const rows = document.querySelectorAll('#setup-rows .setup-row');
+        rows[0].querySelector('.s-name').value = 'Alpha';
+        rows[0].querySelector('.s-host').value = ${JSON.stringify('KVMURL')};
+        rows[1].querySelector('.s-name').value = 'Beta';
+        rows[1].querySelector('.s-host').value = ${JSON.stringify('KVMURL')};
+        // Leave the camera and microphone off: turning them ON asks macOS for
+        // access, which would put a system dialog in front of the test run.
+        document.getElementById('enable-mic').checked = false;
+        document.getElementById('enable-camera').checked = false;
+        document.getElementById('setup-rows').dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('setup-done').click();
+      `.replace(/KVMURL/g, kvm.url));
+
+      await expect.poll(() => h.readConfig().servers ? h.readConfig().servers.length : 0,
+        { timeout: 15000 }).toBe(2);
+      const cfg = h.readConfig();
+      expect(cfg.servers.map(s => s.name)).toEqual(['Alpha', 'Beta']);
+      expect(cfg.tabs.openNewInTabs).toBe(true);
+      expect(cfg.media).toEqual({ camera: false, microphone: false });
+
+      // Both are open, and "use tabs" put them in one window.
+      await expect.poll(async () => (await sessionUrls(h.app)).filter(u => u.includes('127.0.0.1')).length,
+        { timeout: 15000 }).toBe(2);
+      expect((await windowsInfo(h.app)).filter(w => !w.url).length).toBe(1);
+    } finally { await h.close(); }
+  });
+
+  test('a blank row is not a server', async () => {
+    const h = await launchApp({ servers: [], openSessions: [] });
+    try {
+      await waitForSetup(h);
+      await setupEl(h.app, 'document.getElementById("add-more").click()');
+      await setupEl(h.app, `
+        const rows = document.querySelectorAll('#setup-rows .setup-row');
+        rows[0].querySelector('.s-name').value = 'Alpha';
+        rows[0].querySelector('.s-host').value = ${JSON.stringify(kvm.url)};
+        document.getElementById('setup-rows').dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('setup-done').click();
+      `);
+      await expect.poll(() => h.readConfig().servers ? h.readConfig().servers.length : 0,
+        { timeout: 15000 }).toBe(1);
+      expect(h.readConfig().servers[0].name).toBe('Alpha');
+    } finally { await h.close(); }
+  });
+});
+
 test.describe('settings + css', () => {
   test('rapid CSS toggles settle on the final state', async () => {
     const h = await launchApp({
@@ -523,7 +796,7 @@ test.describe('application menu', () => {
   }
 
   // Cmd+Q has to reach the remote machine, so the menu must not claim it — it
-  // quits on Cmd+` instead. Electron's default menu DOES bind Cmd+Q, which is
+  // quits on Cmd+Shift+Q instead. Electron's default menu DOES bind Cmd+Q, which is
   // what made the lost-menu bug quit the app out from under the user.
   test('the menu never claims Cmd+Q, even when the hotkey config is broken', async () => {
     const h = await launchApp({
@@ -532,9 +805,11 @@ test.describe('application menu', () => {
       blockedHotkeys: [{ meta: true, description: 'broken', enabled: true }]
     });
     try {
-      expect(await menuAccelerator(h.app, `Quit ${productName}`)).toBe('Cmd+`');
+      expect(await menuAccelerator(h.app, `Quit ${productName}`)).toBe('Cmd+Shift+Q');
       const accels = await menuAccelerators(h.app);
-      expect(accels.filter(a => /\+Q$/i.test(a))).toEqual([]);
+      // Exactly Cmd+Q, not anything ending in Q: quitting is Cmd+Shift+Q, which
+      // is a different chord and does not swallow the one the session needs.
+      expect(accels.filter(a => /^(cmd|command|commandorcontrol)\+q$/i.test(a))).toEqual([]);
     } finally { await h.close(); }
   });
 

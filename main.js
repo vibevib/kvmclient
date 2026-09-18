@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, session, systemPreferences } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, session, systemPreferences, nativeTheme, webContents } = require('electron');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const Store = require('electron-store');
@@ -63,9 +63,11 @@ const WB_KEYS = ['r', 'g', 'b', 'brightness', 'contrast', 'saturate', 'sharpen']
 const store = new Store({
   name: 'config',
   defaults: {
-    servers: [
-      { id: 'default', name: 'Default', host: 'http://192.168.1.100' }
-    ],
+    // Empty on purpose. A placeholder server here would mean "nothing is
+    // configured yet" never happens, and that is exactly the state the first-run
+    // setup screen exists for.
+    servers: [],
+    appearance: 'auto',
     cssOverrides: [
       { selector: '.un-collapse-triangle-collapsed', css: 'opacity: 0.01 !important', enabled: true, scope: 'all' },
       { selector: '.kvm-video-info', css: 'display: none !important', enabled: true, scope: 'all' },
@@ -106,15 +108,17 @@ const store = new Store({
   }
 });
 
-// Migrate a legacy single-host config into the servers list
+// Migrate a legacy single-host config into the servers list.
+//
+// Only when `servers` is MISSING — not when it is an empty list. This used to
+// seed http://192.168.1.100 into any empty list, so a user who deleted their
+// last server got a placeholder pointing at a machine that is probably not
+// theirs, and first run began with one fictional server instead of a setup
+// screen. An empty list is now a real state and is left alone.
 (function migrateServers() {
-  const servers = store.get('servers');
-  if (!Array.isArray(servers) || servers.length === 0) {
-    const legacyHost = store.get('host');
-    store.set('servers', [
-      { id: 'default', name: 'Default', host: legacyHost || 'http://192.168.1.100' }
-    ]);
-  }
+  if (Array.isArray(store.get('servers'))) return;
+  const legacyHost = store.get('host');
+  store.set('servers', legacyHost ? [{ id: 'default', name: 'Default', host: legacyHost }] : []);
 })();
 
 // One-time migration: video params used to live as a generated `#video-wrapper`
@@ -378,6 +382,50 @@ function sanitizeHotkeys(list) {
     };
   }).filter(h => h.key);
 }
+
+// Light or dark, or whatever macOS is doing. This drives `prefers-color-scheme`
+// in every page the app itself serves — Settings, the connect screen, the colour
+// panel, the tab strip. It deliberately does NOT reach the remote KVM page: that
+// is the device's own UI and not ours to restyle.
+function getAppearance() {
+  const a = store.get('appearance');
+  return a === 'dark' || a === 'light' ? a : 'auto';
+}
+
+function applyAppearance() {
+  // Electron spells "follow the OS" as 'system'.
+  const a = getAppearance();
+  nativeTheme.themeSource = a === 'auto' ? 'system' : a;
+  broadcastTheme();
+}
+
+// 'dark' or 'light' — never 'auto'. The pages want an answer, not a policy.
+function resolvedTheme() {
+  const a = getAppearance();
+  if (a === 'dark' || a === 'light') return a;
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light';
+}
+
+// Setting nativeTheme.themeSource is NOT enough on its own. It flips
+// shouldUseDarkColors in the main process, but on this Electron/macOS pair
+// `prefers-color-scheme` in a renderer stays light regardless — verified on a
+// brand-new window with a data: URL, so it is not our pages or our timing. So
+// the theme is pushed to the pages instead and they key off [data-theme]; the
+// media query is left in their CSS as the correct fallback, not as the mechanism.
+function broadcastTheme() {
+  const theme = resolvedTheme();
+  for (const wc of webContents.getAllWebContents()) {
+    if (wc.isDestroyed()) continue;
+    // Our own pages only. The remote KVM page is the device's UI, not ours.
+    let url = '';
+    try { url = wc.getURL(); } catch (e) { continue; }
+    if (!isLocalPageUrl(url)) continue;
+    try { wc.send('theme', theme); } catch (e) { /* going away */ }
+  }
+}
+
+// Auto has to keep up with macOS, not just with launch.
+nativeTheme.on('updated', () => { if (getAppearance() === 'auto') broadcastTheme(); });
 
 // Camera/microphone passthrough. One setting each, shared by every session, so
 // granting once covers every tab and window rather than being asked per tab.
@@ -716,7 +764,12 @@ function createSession(win, server, itemId) {
     if (httpCode >= 400) { showConnectPage(rec, `HTTP Error ${httpCode} from ${url}`); if (win.__tab) pushWinTabsState(win); }
   });
   view.webContents.on('before-input-event', (e, input) => {
-    if (input.meta && input.key === '`') { app.isQuitting = true; app.quit(); return; }
+    // Quit is Cmd+Shift+Q. Plain Cmd+Q belongs to the remote machine, so it is
+    // never bound here — the shift is what separates "quit this app" from a key
+    // the session is meant to receive.
+    if (input.meta && input.shift && input.key.toLowerCase() === 'q') {
+      app.isQuitting = true; app.quit(); return;
+    }
     if (input.meta && input.key === ',') { e.preventDefault(); openSettings(); return; }
   });
 
@@ -800,12 +853,23 @@ function winTabEntries(win) {
     // showing the same server, so a restored window fills its buttons.
     const s = sessions.find(x => x.itemId === it.id && !claimed.has(x.id))
       || sessions.find(x => !x.itemId && x.serverId === it.serverId && !claimed.has(x.id));
-    if (s) claimed.add(s.id);
+    if (s) {
+      claimed.add(s.id);
+      // Record the adoption the moment it is rendered, not when the tab is next
+      // clicked. The strip has already told the user this session IS that tab,
+      // so deleting the row has to be able to find it — otherwise the row goes
+      // and the session stays, reappearing as an ad-hoc tab.
+      if (!s.itemId) s.itemId = it.id;
+    }
     return { item: it, session: s || null, serverId: it.serverId, label: it.label || '' };
   });
 
   for (const s of sessions) {
     if (claimed.has(s.id)) continue;
+    // The splash — a session with no server — is not a tab. It is what the
+    // window shows when there are none, so giving it a button would mean closing
+    // the last tab left one behind.
+    if (!s.serverId) continue;
     entries.push({ item: null, session: s, serverId: s.serverId, label: '' });
   }
   return entries;
@@ -886,6 +950,117 @@ function activateEntryInWin(win, entry) {
   if (colorWindow && !colorWindow.isDestroyed()) colorWindow.webContents.send('wb-reload');
 }
 
+// ---- Closing a tab ----------------------------------------------------------
+
+// Tear one session down and forget it. Explicit, because a view's webContents
+// outlives its window until GC — dropping the reference alone leaves the remote
+// stream running. The caller decides what the window shows next.
+function closeSession(sess) {
+  if (!sess) return;
+  const win = sess.win;
+  destroyView(sess.view);
+  windows.delete(sess.id);
+  if (lastActiveInstanceId === sess.id) lastActiveInstanceId = null;
+  if (win && !win.isDestroyed() && win.__tab) {
+    const t = win.__tab;
+    t.sessionIds = t.sessionIds.filter(id => id !== sess.id);
+    if (t.activeId === sess.id) t.activeId = null;
+  }
+}
+
+// A window that has just lost its last tab shows the splash, not a black
+// rectangle with no way out.
+function ensureWindowHasSession(win) {
+  if (!win || win.isDestroyed() || !win.__tab) return;
+  const t = win.__tab;
+  if (t.activeId && windows.has(t.activeId)) return;
+  const live = winTabEntries(win).filter(e => e.session);
+  if (live.length) return activateEntryInWin(win, live[0]);
+
+  const splash = createSession(win, null, null);
+  t.sessionIds.push(splash.id);
+  t.activeId = splash.id;
+  win.contentView.addChildView(splash.view);
+  lastActiveInstanceId = splash.id;
+  layoutWindow(win);
+  if (t.overlay) win.contentView.addChildView(t.overlay);
+  win.setTitle(APP_NAME);
+  pushWinTabsState(win);
+  createMenu();
+  persistOpenSessions();
+}
+
+// A row deleted in Settings takes its session with it.
+//
+// Without this the session stays open with no row behind it, winTabEntries
+// re-adopts it as an ad-hoc tab, and the button the user just deleted is still
+// on the strip — so deleting every row removed every row and no buttons.
+function closeSessionsForRemovedItems() {
+  const live = new Set(getTabsConfig().items.map(i => i.id));
+  const touched = new Set();
+  for (const rec of [...windows.values()]) {
+    if (!rec.itemId || live.has(rec.itemId)) continue;
+    if (rec.win && !rec.win.isDestroyed()) touched.add(rec.win);
+    closeSession(rec);
+  }
+  for (const w of touched) ensureWindowHasSession(w);
+}
+
+// Close one tab: its saved row AND its session. Both halves are the point —
+// leave the row and the button returns on the next render; leave the session and
+// it comes back as an ad-hoc tab.
+function closeTabInWin(win, index) {
+  if (!win || win.isDestroyed() || !win.__tab) return false;
+  const entry = winTabEntries(win)[index];
+  if (!entry) return false;
+  if (entry.session) closeSession(entry.session);
+  if (entry.item) {
+    const cfg = getTabsConfig();
+    store.set('tabs', sanitizeTabs({ ...cfg, items: cfg.items.filter(i => i.id !== entry.item.id) }));
+  }
+  ensureWindowHasSession(win);
+  applyTabsConfigLive();
+  createMenu();
+  persistOpenSessions();
+  return true;
+}
+
+// Drop a tab's connection without dropping the tab. This is the same state a
+// background tab enters when "suspend" is on, so clicking the tab reconnects it —
+// closing is what removes it.
+function disconnectTabInWin(win, index) {
+  if (!win || win.isDestroyed() || !win.__tab) return false;
+  const entry = winTabEntries(win)[index];
+  const sess = entry && entry.session;
+  if (!sess || sess.suspended || !sess.serverId) return false;
+  sess.suspended = true;
+  try { sess.view.webContents.loadURL('about:blank'); } catch (e) {}
+  pushWinTabsState(win);
+  createMenu();
+  return true;
+}
+
+// The tab the active window is showing, or -1.
+function activeTabIndex(win) {
+  if (!win || win.isDestroyed() || !win.__tab) return -1;
+  const cur = windows.get(win.__tab.activeId);
+  if (!cur) return -1;
+  return winTabEntries(win).findIndex(e => e.session && e.session.id === cur.id);
+}
+
+function disconnectActiveTab() {
+  const win = activeTabbedWin();
+  const i = activeTabIndex(win);
+  if (i >= 0) disconnectTabInWin(win, i);
+}
+
+// Close whichever tab the active window is showing.
+function closeActiveTab() {
+  const win = activeTabbedWin();
+  const i = activeTabIndex(win);
+  if (i >= 0) closeTabInWin(win, i);
+}
+
 // Show/hide the tab strip on a window, live, without recreating the window.
 function setStripShown(win, show) {
   if (!win || win.isDestroyed() || !win.__tab) return;
@@ -946,6 +1121,7 @@ function switchWinRelative(delta) {
 // Live-apply the shared tabs config (position/size/overlay/buttons) to every open
 // window's strip — no window is recreated.
 function applyTabsConfigLive() {
+  closeSessionsForRemovedItems();
   const show = getTabsConfig().showStrip;
   for (const w of BrowserWindow.getAllWindows()) {
     if (!w.__tab) continue;
@@ -957,13 +1133,19 @@ function applyTabsConfigLive() {
   }
 }
 
-// Open a server the way the shared setting says to: as another tab on the window
-// you are already using, or in a window of its own. A tab opened this way has no
-// saved slot, so it lands after the predefined tabs (see winTabEntries).
+// Open a server the way the shared setting says to: as another tab in the one
+// session window, or in a window of its own when tabs are off. A tab opened this
+// way has no saved slot, so it lands after the predefined tabs (see
+// winTabEntries).
 function openServer(server) {
   if (!server) return openServerWindow(null);
-  const win = activeTabbedWin();
-  if (getTabsConfig().openNewInTabs && win && !win.isDestroyed() && win.__tab) {
+  // "Use tabs" means tabs ONLY: one window holds every session. So fall back to
+  // any open session window rather than opening a second one — without that,
+  // opening a server while Settings had focus quietly made another window.
+  const win = getTabsConfig().openNewInTabs
+    ? (activeTabbedWin() || BrowserWindow.getAllWindows().find(w => w.__tab && !w.isDestroyed()))
+    : null;
+  if (win && !win.isDestroyed() && win.__tab) {
     const sess = createSession(win, server, null);
     win.__tab.sessionIds.push(sess.id);
     win.contentView.addChildView(sess.view);
@@ -1580,7 +1762,7 @@ function accelUnlessBlocked(accelerator, key) {
 
 // The essentials, used only if building the real menu ever throws. It must stay
 // trivially safe to build — and must NOT bind Cmd+Q, which belongs to the remote
-// machine; quitting is Cmd+` here, as in the real menu.
+// machine; quitting is Cmd+Shift+Q here, as in the real menu.
 function fallbackMenuTemplate() {
   return [
     {
@@ -1592,7 +1774,7 @@ function fallbackMenuTemplate() {
         { type: 'separator' },
         {
           label: `Quit ${APP_NAME}`,
-          accelerator: 'Cmd+`',
+          accelerator: 'Cmd+Shift+Q',
           click: () => { app.isQuitting = true; app.quit(); }
         }
       ]
@@ -1660,7 +1842,14 @@ function buildMenuTemplate() {
       click: () => setTabsConfig({ behavior: tabsCfg.behavior === 'suspend' ? 'keep' : 'suspend' }) },
     { type: 'separator' },
     { label: 'Next Session', accelerator: 'Ctrl+Tab', enabled: entries.length > 1, click: () => switchWinRelative(1) },
-    { label: 'Previous Session', accelerator: 'Ctrl+Shift+Tab', enabled: entries.length > 1, click: () => switchWinRelative(-1) }
+    { label: 'Previous Session', accelerator: 'Ctrl+Shift+Tab', enabled: entries.length > 1, click: () => switchWinRelative(-1) },
+    { type: 'separator' },
+    // Disconnect keeps the tab and drops the stream; close removes the tab.
+    { label: 'Disconnect Tab', enabled: activeTabIndex(focusedWin) >= 0,
+      click: () => disconnectActiveTab() },
+    // Cmd+W only if the user has not asked for it to reach the remote machine.
+    { label: 'Close Tab', accelerator: accelUnlessBlocked('Cmd+W', 'w'),
+      enabled: entries.length > 0, click: () => closeActiveTab() }
   ];
   if (winTab && entries.length) {
     tabsSubmenu.push({ type: 'separator' });
@@ -1695,7 +1884,7 @@ function buildMenuTemplate() {
         { type: 'separator' },
         {
           label: `Quit ${APP_NAME}`,
-          accelerator: 'Cmd+`',
+          accelerator: 'Cmd+Shift+Q',
           click: () => {
             app.isQuitting = true;
             app.quit();
@@ -1784,7 +1973,7 @@ function buildMenuTemplate() {
 // ---- IPC --------------------------------------------------------------------
 
 ipcMain.handle('get-config', (event) => {
-  if (!isTrustedSender(event)) return { servers: [], cssOverrides: [], blockedHotkeys: [], tabs: getTabsConfig(), media: { camera: false, microphone: false }, host: '' };
+  if (!isTrustedSender(event)) return { servers: [], cssOverrides: [], blockedHotkeys: [], tabs: getTabsConfig(), media: { camera: false, microphone: false }, appearance: getAppearance(), host: '' };
   const rec = findRecBySender(event);
   return {
     servers: getServers(),
@@ -1792,6 +1981,7 @@ ipcMain.handle('get-config', (event) => {
     blockedHotkeys: getBlockedHotkeys(),
     tabs: getTabsConfig(),
     media: getMediaConfig(),
+    appearance: getAppearance(),
     // connect.html (running inside a session view) prefills this to retry the host.
     // The splash session has no server, hence the null guard.
     host: rec && rec.server ? (rec.server.host || '') : ''
@@ -1806,6 +1996,11 @@ ipcMain.handle('save-config', (event, newConfig) => {
   if (newConfig.servers !== undefined) store.set('servers', sanitizeServers(newConfig.servers));
   if (newConfig.cssOverrides !== undefined) store.set('cssOverrides', sanitizeOverrides(newConfig.cssOverrides));
   if (newConfig.blockedHotkeys !== undefined) store.set('blockedHotkeys', sanitizeHotkeys(newConfig.blockedHotkeys));
+  if (newConfig.appearance !== undefined) {
+    const a = newConfig.appearance;
+    store.set('appearance', a === 'dark' || a === 'light' ? a : 'auto');
+    applyAppearance();
+  }
   if (newConfig.media !== undefined) {
     const next = sanitizeMedia(newConfig.media);
     const prev = getMediaConfig();
@@ -1888,6 +2083,31 @@ ipcMain.handle('tabs-switch', (event, index) => {
   return true;
 });
 
+ipcMain.handle('tabs-close', (event, index) => {
+  const win = overlayOwner.get(event.sender.id);
+  if (win && !win.isDestroyed()) closeTabInWin(win, Number(index));
+  return true;
+});
+
+// Right-click on a tab. Built here rather than in the page because the strip is
+// a sandboxed renderer — and so the item can name what it is about to close.
+ipcMain.handle('tabs-context-menu', (event, index) => {
+  const win = overlayOwner.get(event.sender.id);
+  if (!win || win.isDestroyed()) return true;
+  const i = Number(index);
+  const entry = winTabEntries(win)[i];
+  if (!entry) return true;
+  const server = getServerById(entry.serverId) || (entry.session && entry.session.server);
+  const name = entry.label || (server ? (server.name || server.host) : `Tab ${i + 1}`);
+  const live = !!(entry.session && !entry.session.suspended && entry.serverId);
+  Menu.buildFromTemplate([
+    { label: 'Disconnect', enabled: live, click: () => disconnectTabInWin(win, i) },
+    { type: 'separator' },
+    { label: `Close ${name}`, click: () => closeTabInWin(win, i) }
+  ]).popup({ window: win });
+  return true;
+});
+
 // Show the tab strip on the active session window (from the Settings button).
 ipcMain.handle('show-tabs-here', (event) => {
   if (!isTrustedSender(event)) return false;
@@ -1903,6 +2123,53 @@ ipcMain.handle('update-tabs', (event, cfg) => {
   createMenu();
   return true;
 });
+
+// First run: the whole starting configuration in one call, from connect.html
+// when no servers exist yet. Deliberately narrower than save-config — it can
+// create the first servers and set the three switches that screen shows, and
+// nothing else.
+ipcMain.handle('setup-complete', (event, setup) => {
+  if (!isTrustedSender(event)) return false;
+  const s = (setup && typeof setup === 'object') ? setup : {};
+  const rows = (Array.isArray(s.servers) ? s.servers : []).filter(r => r && asStr(r.host).trim());
+  const servers = sanitizeServers(rows.map((r, i) => ({
+    id: `s${i}`, name: asStr(r.name, 200).trim(), host: asStr(r.host, 500).trim()
+  })));
+  if (!servers.length) return false;
+
+  store.set('servers', servers);
+  store.set('tabs', sanitizeTabs({ ...getTabsConfig(), openNewInTabs: !!s.useTabs }));
+  const media = sanitizeMedia({ camera: !!s.camera, microphone: !!s.microphone });
+  store.set('media', media);
+  // Ask macOS now, while the user is still looking at the screen that asked.
+  const turnedOn = [];
+  if (media.camera) turnedOn.push('camera');
+  if (media.microphone) turnedOn.push('microphone');
+  if (turnedOn.length) ensureSystemMediaAccess(turnedOn);
+
+  applyTabsConfigLive();
+  createMenu();
+
+  // Open what was just configured, reusing the view that asked for the first one.
+  const rec = findRecBySender(event);
+  servers.forEach((server, i) => {
+    if (i === 0 && rec && !rec.win.isDestroyed()) {
+      rec.serverId = server.id;
+      rec.server = server;
+      rec.win.setTitle(`${APP_NAME} — ${server.name || server.host}`);
+      loadHostInView(rec, server.host);
+    } else {
+      openServer(server);
+    }
+  });
+  persistOpenSessions();
+  return true;
+});
+
+// Read synchronously from a <head> script, so a dark window never paints white
+// first. Not guarded by isTrustedSender: it is two words, 'dark' or 'light', and
+// the preload that asks is shared with the remote page.
+ipcMain.on('theme-sync', (event) => { event.returnValue = resolvedTheme(); });
 
 ipcMain.handle('connect', (event, host) => {
   if (!isTrustedSender(event)) return;
@@ -2010,7 +2277,7 @@ app.on('before-quit', () => {
 // and leaves the app killable only by force.
 //
 // Cmd+Q is passed to the remote machine the right way instead: the application
-// menu simply never binds it (Quit is on Cmd+`), so the key falls through to the
+// menu simply never binds it (Quit is on Cmd+Shift+Q), so the key falls through
 // session. That only holds while the real menu is installed — which is why
 // createMenu() can no longer fail into Electron's default menu, whose Quit *is*
 // bound to Cmd+Q.
@@ -2033,6 +2300,8 @@ app.on('certificate-error', (event, webContents, url, error, certificate, callba
 });
 
 app.whenReady().then(() => {
+  applyAppearance();
+
   // The remote KVM page is untrusted content. Grant it only what a KVM session
   // needs (mouse capture, fullscreen, clipboard) and deny camera, microphone,
   // geolocation, notifications, USB/HID/serial and everything else outright.

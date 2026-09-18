@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('kvmAPI', {
   getConfig: () => ipcRenderer.invoke('get-config'),
+  // Resolved theme ('dark'/'light'). Read synchronously so a <head> script can
+  // stamp it before the first paint; `onTheme` keeps it current afterwards.
+  theme: ipcRenderer.sendSync('theme-sync'),
+  onTheme: (cb) => ipcRenderer.on('theme', (_e, t) => cb(t)),
   saveConfig: (config) => ipcRenderer.invoke('save-config', config),
   updateCSS: (overrides) => ipcRenderer.invoke('update-css', overrides),
   updateTabs: (tabs) => ipcRenderer.invoke('update-tabs', tabs),

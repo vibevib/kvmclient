@@ -13,7 +13,7 @@ leKVM - macOS Electron app that displays remote browser session at 192.168.1.100
 - Create frameless BrowserWindow
 - Register `before-input-event` handler to intercept hotkeys
 - Load config from `~/Library/Application Support/leKVM/config.json`
-- Block app quit except on cmd+`
+- Block app quit except on Cmd+Shift+Q
 
 ### 2. WebContentsView
 - Loads `http://192.168.1.100`
@@ -44,7 +44,7 @@ Location: `~/Library/Application Support/leKVM/config.json` (macOS)
          │
          ▼
 ┌─────────────────────────┐
-│ cmd+` ?                 │──Yes──► app.quit()
+│ Cmd+Shift+Q ?           │──Yes──► app.quit()
 └────────┬────────────────┘
          │ No
          ▼
@@ -150,7 +150,66 @@ The iPad app's icon is the same mark, but it must be **full-bleed and free of
 any alpha channel** — iOS applies its own mask and App Store Connect rejects
 transparency. See `leKVMpad/Tools/make-icon.py`.
 
+## First Run
+
+`connect.html` is both the splash and the setup screen. With servers configured
+it lists them to pick from; with **none** configured it is a form instead: a
+name and an address, `＋ Add more` for another pair, and three switches — *Use
+tabs*, *Enable mic*, *Enable camera* — all ticked. The tabs switch only appears
+once there is a second row, because one server cannot be "in tabs only" in any
+meaningful sense. Finishing calls `setup-complete`, which is deliberately
+narrower than `save-config`: it writes the first servers and those three
+switches and nothing else.
+
+None of this could ever run before, and the reason is worth keeping:
+`migrateServers()` treated an **empty** server list as a legacy config and seeded
+`http://192.168.1.100` into it. So "no servers configured" was unreachable —
+a fresh install began with one fictional server, and deleting your last server
+silently handed you someone else's address. The migration now fires only when
+the `servers` key is *missing*, and the store's default for it is `[]`.
+
+Camera and microphone start **ticked** here, which is the opposite of everywhere
+else in the app — they remain off by default for a server added later. That was
+an explicit product decision, not an oversight.
+
+## Appearance
+
+`appearance` is `auto` (the default), `dark` or `light`. It sets
+`nativeTheme.themeSource`, which is what drives `prefers-color-scheme` in every
+page the app serves — Settings, the connect screen, the colour panel, the tab
+strip. Each of those carries the same two token blocks: a `:root` with the light
+values and a `@media (prefers-color-scheme: dark)` with the dark ones. The pair
+is **duplicated, not linked**: the CSP on these pages allows inline styles only,
+so there is no shared stylesheet to reference. Change one palette, change all
+four.
+
+It deliberately stops at our own pages. The remote KVM page is the device's UI,
+not ours to restyle.
+
+The select saves on change rather than on Save — a theme you have to commit to
+before you can see it is a theme you cannot try on.
+
+## Settings Window Style
+
+One font family, one body size (13px); only headings change size. Everything
+else separates by **weight and grey**, not by a different font or a colour —
+the monospace runs and the blue/green code colouring are gone. Spacing comes
+from a four-step scale (`--s1`…`--s5`) so margins line up instead of being
+chosen per block.
+
+Every setting is one line: `label | control | hint`, on a shared grid, so the
+controls align down the pane. Hints are clipped rather than wrapped, which keeps
+the line count honest — if a hint does not fit, shorten it.
+
+The layout constraint from before still holds and is covered by a test: body is
+a flex column, the tab bar is fixed, only `.tab-content.active` scrolls, and the
+Save row is pinned. Do not put the panes back inside a scrolling body.
+
 ## Tab Settings
+
+A **reserved tab** is a slot kept on the strip for a server whether or not it is
+open — the list in Settings maps server, order and short name. Servers opened
+later land after them.
 
 Four settings are **one setting each for every tab**, stored on `tabs` in the
 config: `openNewInTabs`, `showStrip`, `behavior` (`keep`/`suspend`) and
@@ -181,6 +240,36 @@ they can never disagree about what the tabs are.
 `activateEntryInWin` trusts that resolution rather than re-adopting: when it
 focuses a session for an item it stamps `session.itemId`, so a **second** tab for
 the same server opens its own session instead of adopting the first one again.
+
+## Closing a Tab
+
+Tabs menu → **Close Tab** (Cmd+W unless the user has asked for that key to reach
+the remote machine), or right-click a tab on the strip. The strip is a sandboxed
+page with no `Menu` of its own, so the context menu is built in the main process
+from `tabs-context-menu` and popped over the window.
+
+Closing takes **both halves**: the saved row in `tabs.items` *and* the live
+session. Either alone does nothing visible — drop the session and the row puts
+the button straight back on the next render; drop the row and `winTabEntries`
+re-adopts the orphaned session as an ad-hoc tab. That second case was the bug:
+deleting every row in Settings removed every row and left every button, because
+each session simply changed from "tab 1" to "an unnamed tab".
+
+Two supporting changes make it hold:
+
+- `winTabEntries` stamps `itemId` on a session the moment it **renders** it under
+  a row, not when that tab is next clicked. The strip has already told the user
+  this session is that tab, so deleting the row has to be able to find it.
+- The splash — a session with no server — is not a tab. It is what a window
+  shows when it has none, so giving it a button meant closing the last tab left
+  one behind.
+
+**Disconnect** is the other half: Tabs → *Disconnect Tab*, or right-click a tab.
+It drops the stream and leaves the tab — the same state a background tab enters
+when "suspend" is on, so clicking the tab reconnects it. Close is what removes it.
+
+`Use tabs` means tabs *only*: with it on, `openServer` falls back to any open
+session window rather than making a second one.
 
 ## White Point
 

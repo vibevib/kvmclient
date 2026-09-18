@@ -39,6 +39,25 @@ That writes the PNG ladder, `icon.icns` and `icon.ico` from the one SVG. The
 `.icns` step needs `iconutil`, so it only runs on macOS; everything else works
 anywhere.
 
+## Appearance
+
+**Settings → General → Theme**: Auto (the default, follows macOS), Dark or
+Light. It applies to the app's own windows, not to the KVM's web UI.
+
+## First run
+
+With no servers configured, the app opens a setup screen: a name and an address,
+`＋ Add more` for another, and three switches (use tabs, enable mic, enable
+camera). Everything it sets can be changed afterwards in **Settings**.
+
+Tabs can be closed from **Tabs → Close Tab** or by right-clicking a tab on the
+strip. Closing a tab removes its row as well as its session, so it does not come
+back on the next render. **Disconnect Tab**, in the same two places, drops the
+connection and keeps the tab — click it again to reconnect.
+
+**Reserved tabs** (Settings → Tabs) are slots kept on the strip for a server
+whether or not it is open, with a short name and an order you can drag.
+
 ## Tests
 
 End-to-end tests drive the real app with Playwright's Electron support — each one

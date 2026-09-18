@@ -5,78 +5,109 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'">
   <title>Video Color</title>
   <style>
+    /* Same palette as Settings; Appearance drives prefers-color-scheme. The R/G/B
+       labels keep a colour each — that one names the channel it controls, so it
+       is information rather than decoration. */
+    :root {
+      --bg: #ffffff; --sunken: #f6f7f8; --hover: rgba(27,31,35,0.06); --line: #dfe3e8;
+      --ink: #1b1f23; --ink-2: #57606a; --ink-3: #8b949e; --on-ink: #ffffff;
+      --ok: #1a7f37; --warn: #9a6700;
+      --ch-r: #c0392b; --ch-g: #1a7f37; --ch-b: #1f5fbf;
+    }
+    :root[data-theme="dark"] {
+        --bg: #161616; --sunken: #1e1e1e; --hover: rgba(255,255,255,0.07); --line: #2c2c2c;
+        --ink: #e6e6e6; --ink-2: #a6a6a6; --ink-3: #6f6f6f; --on-ink: #161616;
+        --ok: #7ee787; --warn: #e0a458;
+        --ch-r: #ff6b6b; --ch-g: #7ee787; --ch-b: #6cb6ff;
+      }
+
     * { box-sizing: border-box; }
+    html { background: var(--bg); }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #161616;
-      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-size: 12px;
+      background: var(--bg);
+      color: var(--ink);
       margin: 0;
       padding: 14px 16px;
       user-select: none;
       -webkit-user-select: none;
     }
-    h1 { font-size: 14px; font-weight: 600; color: #fff; margin: 0 0 2px 0; letter-spacing: -0.2px; }
-    #target { font-size: 11px; color: #777; margin: 0 0 10px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    h1 { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0 0 2px; }
+    #target { color: var(--ink-3); margin: 0 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
     .section {
-      border: 1px solid #262626;
-      border-radius: 10px;
-      padding: 10px 12px 4px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px 4px;
       margin-bottom: 12px;
     }
     .section.disabled { opacity: 0.45; pointer-events: none; }
     .sec-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-    .sec-title { font-size: 11px; font-weight: 700; color: #cfcfcf; text-transform: uppercase; letter-spacing: 0.5px; }
-    .sec-sub { font-size: 10px; color: #777; }
+    .sec-title { font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+    .sec-sub { color: var(--ink-3); }
+
     .row { display: grid; grid-template-columns: 70px 1fr 56px; align-items: center; gap: 10px; margin-bottom: 8px; }
-    .label { font-size: 12px; color: #aaa; white-space: nowrap; }
-    .label.r { color: #ff6b6b; font-weight: 600; }
-    .label.g { color: #7ee787; font-weight: 600; }
-    .label.b { color: #6cb6ff; font-weight: 600; }
-    input[type="range"] { width: 100%; accent-color: #007aff; cursor: pointer; }
+    .label { color: var(--ink-2); white-space: nowrap; }
+    .label.r { color: var(--ch-r); font-weight: 600; }
+    .label.g { color: var(--ch-g); font-weight: 600; }
+    .label.b { color: var(--ch-b); font-weight: 600; }
+
+    input[type="range"] { width: 100%; accent-color: var(--ink); cursor: pointer; }
     input[type="number"] {
-      width: 100%; padding: 5px 6px; border: none; border-radius: 6px;
-      background: #252525; color: #e0e0e0; font-size: 12px;
-      font-family: 'SF Mono', 'Monaco', monospace; text-align: right;
+      width: 100%; padding: 4px 6px;
+      border: 1px solid var(--line); border-radius: 6px;
+      background: var(--bg); color: var(--ink);
+      font-family: inherit; font-size: 12px; text-align: right;
     }
-    input[type="number"]:focus { outline: none; background: #2d2d2d; box-shadow: 0 0 0 2px rgba(0,122,255,0.35); }
-    .hint { font-size: 10px; color: #555; margin: 0 0 12px 0; line-height: 1.4; }
+    input[type="number"]:focus { outline: none; border-color: var(--ink); box-shadow: 0 0 0 2px var(--hover); }
+
+    .hint { color: var(--ink-3); margin: 0 0 12px; line-height: 1.4; }
     .buttons { display: flex; flex-direction: column; gap: 8px; }
     .btn-row { display: flex; gap: 8px; }
+
     button {
-      flex: 1; padding: 8px 10px; border: none; border-radius: 8px;
-      font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.12s;
+      flex: 1; padding: 7px 10px;
+      border: 1px solid var(--line); border-radius: 7px;
+      background: var(--bg); color: var(--ink);
+      font-family: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    button.primary { background: #007aff; color: #fff; }
-    button.primary:hover { background: #0066d6; }
-    button.secondary { background: #2a2a2a; color: #e0e0e0; }
-    button.secondary:hover { background: #333; }
-    button:disabled { background: #222; color: #555; cursor: not-allowed; }
-    #reset { flex: 0 0 auto; background: none; color: #888; padding: 8px 12px; }
-    #reset:hover { color: #ccc; background: #222; }
+    button:hover:not(:disabled) { background: var(--sunken); border-color: var(--ink-3); }
+    button.primary, .wb-btn.primary {
+      background: var(--ink); border-color: var(--ink); color: var(--on-ink);
+    }
+    button.primary:hover:not(:disabled), .wb-btn.primary:hover:not(:disabled) { opacity: 0.85; }
+    button.secondary { background: var(--sunken); }
+    button:disabled { background: var(--sunken); border-color: var(--line); color: var(--ink-3); cursor: not-allowed; }
+    #reset { flex: 0 0 auto; background: none; border-color: transparent; color: var(--ink-2); padding: 7px 12px; }
+    #reset:hover { color: var(--ink); background: var(--hover); border-color: transparent; }
+
     .wb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .wb-btn {
-    flex: 1 1 0; padding: 7px 10px; border: none; border-radius: 7px;
-    background: #2a2a2a; color: #e0e0e0; font-size: 12px; font-weight: 500; cursor: pointer;
-  }
-  .wb-btn:hover:not(:disabled) { background: #333; }
-  .wb-btn.primary { background: #0a5bd6; color: #fff; }
-  .wb-btn.primary:hover:not(:disabled) { background: #0a66ee; }
-  .wb-btn:disabled { opacity: 0.4; cursor: default; }
-  .wb-lbl { font-size: 11px; color: #888; }
-  .wb-sel {
-    flex: 1 1 auto; background: #252525; color: #ccc; border: none; border-radius: 6px;
-    font-size: 11px; padding: 5px 6px; cursor: pointer;
-  }
-  .wb-swatch {
-    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px;
-    border: 1px solid #333; background: #1a1a1a;
-  }
-  #wb-status { font-size: 11px; color: #666; min-height: 14px; line-height: 1.4; }
-  #wb-status.bad { color: #e0a458; }
-  #status { height: 14px; font-size: 11px; color: #666; text-align: center; margin-top: 10px; transition: color 0.15s; }
-    #status.saved { color: #7ee787; }
+    .wb-btn { flex: 1 1 0; }
+    .wb-btn:disabled { opacity: 0.4; cursor: default; }
+    .wb-lbl { color: var(--ink-2); }
+    .wb-sel {
+      flex: 1 1 auto;
+      background: var(--bg); color: var(--ink);
+      border: 1px solid var(--line); border-radius: 6px;
+      font-family: inherit; font-size: 12px; padding: 4px 6px; cursor: pointer;
+    }
+    .wb-swatch {
+      flex: 0 0 auto; width: 22px; height: 22px; border-radius: 5px;
+      border: 1px solid var(--line); background: var(--sunken);
+    }
+    #wb-status { color: var(--ink-3); min-height: 14px; line-height: 1.4; }
+    #wb-status.bad { color: var(--warn); }
+    #status { height: 14px; color: var(--ink-3); text-align: center; margin-top: 10px; }
+    #status.saved { color: var(--ok); }
   </style>
+  <script>
+    // Stamp the theme before the first paint, so a dark window never flashes
+    // white. See broadcastTheme() in main.js for why [data-theme] and not
+    // prefers-color-scheme.
+    try { document.documentElement.dataset.theme = window.kvmAPI.theme; } catch (e) {}
+  </script>
 </head>
 <body>
   <h1>Video Adjustments</h1>
@@ -274,6 +305,8 @@
     if (window.kvmAPI.onVideoWBReload) window.kvmAPI.onVideoWBReload(load);
 
     load();
+
+    window.kvmAPI.onTheme((t) => { document.documentElement.dataset.theme = t; });
   </script>
 </body>
 </html>

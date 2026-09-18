@@ -5,348 +5,330 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'; frame-src 'none'">
   <title>Settings</title>
   <style>
-    * {
-      box-sizing: border-box;
+    /*
+      One family, one body size. Hierarchy comes from weight and grey, not from
+      a different font or a different size on every element — only headings
+      change size. Spacing is a four-step scale so margins line up instead of
+      being picked per block.
+    */
+    :root {
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      --size: 13px;
+      --h1: 18px;
+      --h2: 12px;
+
+      /* The palette. Appearance (General) drives prefers-color-scheme through
+         nativeTheme.themeSource, so these two blocks are the whole theme. The
+         same pair is repeated in every page the app serves — the CSP here
+         allows inline styles only, so there is no shared sheet to link. */
+      --bg: #ffffff;
+      --sunken: #f6f7f8;
+      --hover: rgba(27, 31, 35, 0.06);
+      --line: #dfe3e8;
+      --ink: #1b1f23;
+      --ink-2: #57606a;
+      --ink-3: #8b949e;
+      --on-ink: #ffffff;
+      --danger: #b42318;
+
+      --s1: 4px;
+      --s2: 8px;
+      --s3: 12px;
+      --s4: 16px;
+      --s5: 24px;
+      --radius: 6px;
+      --control: 30px;
+      --label-col: 208px;
     }
-    html { height: 100%; }
+
+    :root[data-theme="dark"] {
+        --bg: #161616;
+        --sunken: #1e1e1e;
+        --hover: rgba(255, 255, 255, 0.07);
+        --line: #2c2c2c;
+        --ink: #e6e6e6;
+        --ink-2: #a6a6a6;
+        --ink-3: #6f6f6f;
+        --on-ink: #161616;
+        --danger: #ff6b6b;
+      }
+
+    * { box-sizing: border-box; }
+    /* The app paints its own background, so the window never shows through with
+       the host's page colour while the theme flips. */
+    html { height: 100%; background: var(--bg); }
+
     /* Column layout: title + tab bar stay put, the pane scrolls, and the
        Save/Reload row stays pinned to the bottom. Before this the whole page
        scrolled, so Save sat below the fold on every tab. */
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      padding: 24px;
-      background: #161616;
-      color: #e0e0e0;
+      font-family: var(--font);
+      font-size: var(--size);
+      line-height: 1.45;
+      background: var(--bg);
+      color: var(--ink);
       margin: 0;
+      padding: var(--s5);
       height: 100%;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
+
     h1 {
       flex: 0 0 auto;
-      font-size: 16px;
+      font-size: var(--h1);
       font-weight: 600;
-      margin: 0 0 20px 0;
-      color: #fff;
-      letter-spacing: -0.3px;
+      margin: 0 0 var(--s4);
     }
     h2 {
-      font-size: 11px;
+      font-size: var(--h2);
       font-weight: 600;
-      color: #666;
-      margin: 24px 0 8px 0;
+      color: var(--ink-2);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.04em;
+      margin: var(--s5) 0 var(--s2);
     }
-    label {
-      display: block;
-      margin-bottom: 6px;
-      font-weight: 500;
-      color: #888;
-      font-size: 12px;
-    }
-    input[type="text"] {
-      width: 100%;
-      padding: 10px 12px;
-      margin-bottom: 8px;
-      border: none;
-      border-radius: 8px;
-      background: #252525;
-      color: #e0e0e0;
-      font-size: 13px;
-      transition: background 0.15s;
-    }
-    input[type="text"]:hover {
-      background: #2a2a2a;
-    }
-    input:focus {
-      outline: none;
-      background: #2d2d2d;
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
-    }
+    p { margin: 0 0 var(--s3); color: var(--ink-2); }
+    strong { font-weight: 600; color: var(--ink); }
+
+    /* ---- panes ---- */
     .tabs {
       flex: 0 0 auto;
       display: flex;
-      gap: 4px;
-      margin-bottom: 20px;
-      background: #252525;
-      padding: 4px;
-      border-radius: 10px;
+      gap: var(--s4);
+      border-bottom: 1px solid var(--line);
+      margin-bottom: var(--s4);
     }
     .tab {
-      padding: 8px 16px;
+      padding: var(--s2) 0;
+      margin-bottom: -1px;
+      border-bottom: 2px solid transparent;
+      color: var(--ink-2);
       cursor: pointer;
-      color: #888;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.15s;
+      white-space: nowrap;
     }
-    .tab.active {
-      color: #fff;
-      background: #3a3a3a;
-    }
-    .tab:hover:not(.active) {
-      color: #ccc;
-      background: #2d2d2d;
-    }
-    .tab-content {
-      display: none;
-    }
+    .tab:hover:not(.active) { color: var(--ink); }
+    .tab.active { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+
+    .tab-content { display: none; }
     .tab-content.active {
       display: block;
       flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
-      /* keep the scrollbar off the content */
-      padding-right: 6px;
-      margin-right: -6px;
+      padding-right: var(--s2);
+      margin-right: calc(var(--s2) * -1);
     }
+    .tab-content > :first-child { margin-top: 0; }
+
+    /* ---- one setting, one line ---------------------------------------------
+       label | control | hint. Every row is the same shape, so the controls line
+       up down the pane instead of each finding its own indent. */
+    .row {
+      display: grid;
+      grid-template-columns: var(--label-col) minmax(0, auto) minmax(0, 1fr);
+      align-items: center;
+      column-gap: var(--s3);
+      min-height: var(--control);
+      margin: 0 0 var(--s2);
+    }
+    .row > .row-label { color: var(--ink); margin: 0; }
+    .row > .hint {
+      color: var(--ink-3);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    label.row { cursor: pointer; }
+
+    /* ---- controls ---- */
+    input[type="text"], input[type="number"], select {
+      font-family: var(--font);
+      font-size: var(--size);
+      color: var(--ink);
+      background: var(--bg);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 0 var(--s2);
+      height: var(--control);
+      width: 100%;
+      margin: 0;
+    }
+    select { cursor: pointer; padding-right: var(--s5); }
+    input[type="text"]:hover, input[type="number"]:hover, select:hover { border-color: var(--ink-3); }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--ink);
+      box-shadow: 0 0 0 2px var(--hover);
+    }
+    input[type="checkbox"] {
+      width: 15px; height: 15px; margin: 0;
+      accent-color: var(--ink);
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .w-auto { width: auto; }
+    .w-sm { width: 96px; }
+    .w-md { width: 180px; }
+
+    button {
+      font-family: var(--font);
+      font-size: var(--size);
+      height: var(--control);
+      padding: 0 var(--s3);
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--ink-3); background: var(--sunken); }
+    button.primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); font-weight: 500; }
+    button.primary:hover { opacity: 0.85; }
+
+    /* ---- lists ---- */
     .list-container {
-      max-height: 360px;
+      max-height: 320px;
       overflow-y: auto;
-      margin-bottom: 12px;
-      border-radius: 10px;
-      background: #1c1c1c;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      margin-bottom: var(--s2);
     }
     .list-item {
       display: flex;
       align-items: center;
-      padding: 10px 12px;
-      gap: 12px;
-      transition: background 0.1s;
+      gap: var(--s3);
+      padding: var(--s2) var(--s3);
+      border-bottom: 1px solid var(--line);
+      min-height: 38px;
     }
-    .list-item:hover {
-      background: #252525;
-    }
-    .list-item input[type="checkbox"] {
-      flex-shrink: 0;
-      width: 16px;
-      height: 16px;
-      accent-color: #007aff;
-    }
-    .list-item .content {
-      flex: 1;
-      min-width: 0;
-    }
-    .list-item .selector {
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 13px;
-      color: #6cb6ff;
+    .list-item:last-child { border-bottom: none; }
+    .list-item:hover { background: var(--sunken); }
+    .list-item .content { flex: 1; min-width: 0; }
+    .list-item .selector,
+    .list-item .css-value,
+    .list-item .hotkey,
+    .list-item .description,
+    .tab-item-row .tab-url {
+      color: var(--ink-2);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       min-width: 0;
     }
-    .list-item .css-value {
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 13px;
-      color: #c3e88d;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      min-width: 0;
-    }
-    /* CSS rows: selector + properties + per-server scope as aligned columns */
+    .list-item .selector, .list-item .hotkey { color: var(--ink); }
+    .list-item .description { color: var(--ink-3); }
+
     .list-item.css-item {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr) 112px auto;
+      grid-template-columns: auto minmax(0, 1fr) minmax(0, 1.4fr) 128px auto;
       align-items: center;
-      column-gap: 10px;
+      column-gap: var(--s2);
     }
-    .scope-select {
-      width: 100%;
-      background: #252525;
-      color: #9a9a9a;
-      border: none;
-      border-radius: 6px;
-      font-size: 11px;
-      padding: 5px 4px;
-      cursor: pointer;
-    }
-    .scope-select:hover {
-      background: #2d2d2d;
-      color: #ccc;
-    }
-    .scope-select:focus {
-      outline: none;
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
-    }
-    /* Tabs settings */
-    .check-row { display: flex; align-items: center; gap: 8px; color: #ccc; font-size: 13px; margin-bottom: 12px; }
-    .check-row input[type="checkbox"] { width: 16px; height: 16px; accent-color: #007aff; }
-    .tabs-opts { display: flex; gap: 16px; margin-bottom: 8px; flex-wrap: wrap; align-items: flex-start; }
-    .field-select {
-      padding: 9px 10px; border: none; border-radius: 8px; background: #252525; color: #e0e0e0; font-size: 13px; cursor: pointer;
-    }
-    .field-select:hover { background: #2a2a2a; }
-    .list-item.tab-item-row {
-      display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; column-gap: 10px; row-gap: 5px;
-    }
-    .tab-item-row select {
-      width: 100%; padding: 8px 10px; border: none; border-radius: 8px; background: #252525; color: #e0e0e0; font-size: 13px; cursor: pointer;
-    }
-    .tab-item-row select:hover { background: #2a2a2a; }
-    .tab-item-row .tab-url {
-      grid-column: 1 / -1;
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 11px; color: #c3e88d;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      padding-left: 2px;
-    }
-    /* One shared tab setting per row */
-    .opt-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
-    .switch { display: flex; align-items: center; gap: 8px; color: #ddd; font-size: 13px;
-              font-weight: 500; margin: 0; cursor: pointer; }
-    .switch input[type="checkbox"] { width: 16px; height: 16px; accent-color: #007aff; margin: 0; }
-    .opt-hint { font-size: 11px; color: #666; }
-
-    /* Compact tab rows: grip | server | url (read only) | short name | delete */
-    .tab-grid { display: grid; grid-template-columns: 22px minmax(0, 1.1fr) minmax(0, 1.4fr) 116px 28px;
-                align-items: center; column-gap: 8px; }
-    .tab-head { display: grid; grid-template-columns: 22px minmax(0, 1.1fr) minmax(0, 1.4fr) 116px 28px;
-                column-gap: 8px; padding: 0 12px 4px; font-size: 10px; text-transform: uppercase;
-                letter-spacing: 0.5px; color: #666; }
-    .list-item.tab-item-row { padding: 6px 12px; }
-    .tab-item-row select, .tab-item-row .tab-name {
-      width: 100%; padding: 6px 8px; border: none; border-radius: 6px;
-      background: #252525; color: #e0e0e0; font-size: 12px; margin: 0;
-    }
-    .tab-item-row select { cursor: pointer; }
-    .tab-item-row select:hover, .tab-item-row .tab-name:hover { background: #2a2a2a; }
-    .tab-item-row .tab-url {
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace; font-size: 11px; color: #c3e88d;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 2px;
-    }
-    .tab-item-row .tab-url.unset { color: #666; font-style: italic; font-family: inherit; }
-    .grip { cursor: grab; color: #555; text-align: center; user-select: none; font-size: 14px; }
-    .grip:active { cursor: grabbing; }
-    .tab-item-row.dragging { opacity: 0.4; }
-    .tab-item-row.drop-before { box-shadow: inset 0 2px 0 #007aff; }
-    .tab-item-row.drop-after { box-shadow: inset 0 -2px 0 #007aff; }
-
-    /* Server rows: name + host as aligned columns */
     .list-item.server-item {
       display: grid;
       grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) auto;
       align-items: center;
-      column-gap: 12px;
+      column-gap: var(--s2);
     }
+
+    /* Reserved tabs: grip | server | url (read only) | short name | delete,
+       one line each. */
+    .tab-grid, .tab-head {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1.1fr) minmax(0, 1.4fr) 132px 26px;
+      align-items: center;
+      column-gap: var(--s2);
+    }
+    .tab-head {
+      padding: 0 var(--s3) var(--s1);
+      font-size: var(--size);
+      color: var(--ink-3);
+    }
+    .tab-item-row .tab-url.unset { color: var(--ink-3); font-style: italic; }
+    .grip { cursor: grab; color: var(--ink-3); text-align: center; user-select: none; }
+    .grip:active { cursor: grabbing; }
+    .tab-item-row.dragging { opacity: 0.4; }
+    .tab-item-row.drop-before { box-shadow: inset 0 2px 0 var(--ink); }
+    .tab-item-row.drop-after { box-shadow: inset 0 -2px 0 var(--ink); }
+
+    .scope-select, .tab-item-row select, .tab-item-row .tab-name {
+      height: 26px;
+      padding: 0 var(--s1);
+    }
+
     .list-item .editable {
       cursor: pointer;
-      padding: 2px 6px;
-      margin: -2px -6px;
-      border-radius: 4px;
-      transition: background 0.1s;
+      padding: 2px var(--s1);
+      margin: -2px calc(var(--s1) * -1);
+      border-radius: var(--radius);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .list-item .editable:hover {
-      background: #333;
-    }
+    .list-item .editable:hover { background: var(--hover); }
     .list-item .edit-input {
-      background: #252525;
-      border: none;
-      color: #e0e0e0;
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 12px;
-      padding: 4px 6px;
-      border-radius: 4px;
+      height: 26px;
+      padding: 0 var(--s1);
       width: 100%;
-      margin: 0;
-      box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.4);
-    }
-    .list-item .hotkey {
-      font-family: 'SF Mono', 'Monaco', 'Menlo', monospace;
-      font-size: 12px;
-      color: #6cb6ff;
-    }
-    .list-item .description {
-      font-size: 11px;
-      color: #666;
-      margin-top: 2px;
     }
     .list-item .delete-btn {
-      background: none;
       border: none;
-      color: #444;
-      cursor: pointer;
-      padding: 4px 8px;
-      font-size: 14px;
-      border-radius: 4px;
-      transition: all 0.1s;
+      background: none;
+      color: var(--ink-3);
+      height: 24px;
+      padding: 0 var(--s1);
       opacity: 0;
     }
-    .list-item:hover .delete-btn {
-      opacity: 1;
-    }
-    .list-item .delete-btn:hover {
-      color: #ff6b6b;
-      background: rgba(255, 107, 107, 0.1);
-    }
+    .list-item:hover .delete-btn { opacity: 1; }
+    .list-item .delete-btn:hover { color: var(--danger); background: none; }
+
     .add-form {
       display: flex;
-      gap: 8px;
-      margin-top: 8px;
+      gap: var(--s2);
+      align-items: center;
+      margin-bottom: var(--s2);
     }
-    .add-form input {
-      margin-bottom: 0;
-    }
-    .add-form .small {
-      width: 140px;
-      flex-shrink: 0;
-    }
-    button {
-      padding: 8px 16px;
-      border: none;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-    button.primary {
-      background: #007aff;
-      color: white;
-    }
-    button.primary:hover {
-      background: #0066d6;
-    }
-    button.secondary {
-      background: #2a2a2a;
-      color: #e0e0e0;
-    }
-    button.secondary:hover {
-      background: #333;
-    }
+    .add-form .small { width: 180px; flex-shrink: 0; }
+    .add-form .hint { color: var(--ink-3); }
+
+    /* ---- footer ---- */
     .button-row {
       flex: 0 0 auto;
       display: flex;
-      gap: 8px;
+      gap: var(--s2);
       justify-content: flex-end;
-      margin-top: 20px;
-      padding-top: 16px;
-      border-top: 1px solid #242424;
+      margin-top: var(--s4);
+      padding-top: var(--s3);
+      border-top: 1px solid var(--line);
     }
+
+    .empty-row { padding: var(--s3); color: var(--ink-3); }
+
     .shortcuts-info {
-      margin-top: 20px;
-      padding: 12px 14px;
-      background: #1c1c1c;
-      border-radius: 10px;
-      font-size: 12px;
-      color: #888;
+      margin-top: var(--s5);
+      padding: var(--s3);
+      background: var(--sunken);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      color: var(--ink-2);
     }
+    .shortcuts-info p { margin: 0 0 var(--s1); color: var(--ink-2); }
+    .shortcuts-info p:last-child { margin-bottom: 0; }
     .shortcuts-info kbd {
-      background: #2a2a2a;
-      padding: 3px 7px;
-      border-radius: 5px;
-      font-family: 'SF Mono', monospace;
-      font-size: 11px;
-    }
-    .shortcuts-info p {
-      margin: 6px 0;
-      color: #666;
+      font-family: var(--font);
+      font-size: var(--size);
+      border: 1px solid var(--line);
+      background: var(--bg);
+      border-radius: var(--radius);
+      padding: 0 5px;
     }
   </style>
+  <script>
+    // Stamp the theme before the first paint, so a dark window never flashes
+    // white. See broadcastTheme() in main.js for why [data-theme] and not
+    // prefers-color-scheme.
+    try { document.documentElement.dataset.theme = window.kvmAPI.theme; } catch (e) {}
+  </script>
 </head>
 <body>
   <h1 id="app-title">Settings</h1>
@@ -360,7 +342,7 @@
 
   <!-- General Tab -->
   <div id="general" class="tab-content active">
-    <p style="font-size: 12px; color: #888; margin-top: 0;">Servers — open any of these from the <strong style="color:#aaa;">Session</strong> menu (each in its own window)</p>
+    <p>Servers you can open from the <strong>Connections</strong> menu.</p>
     <div class="list-container" id="servers-list"></div>
     <div class="add-form">
       <input type="text" id="new-server-name" placeholder="Name (e.g. Office KVM)" class="small">
@@ -368,24 +350,32 @@
       <button class="secondary" id="add-server">Add</button>
     </div>
 
-    <h2 style="margin-top: 20px;">Camera &amp; microphone</h2>
-    <p style="font-size: 12px; color: #888; margin: 0 0 8px;">The KVM passes these to the remote machine as a virtual webcam and headset. Off by default, because the KVM page is served over plain HTTP on your LAN. Granting applies to <strong style="color:#aaa;">every</strong> tab and window.</p>
-    <div class="opt-row">
-      <label class="switch">
-        <input type="checkbox" id="media-camera">
-        <span>Allow the camera</span>
-      </label>
-    </div>
-    <div class="opt-row">
-      <label class="switch">
-        <input type="checkbox" id="media-microphone">
-        <span>Allow the microphone</span>
-      </label>
-      <span class="opt-hint">macOS will ask for its own permission the first time.</span>
+    <h2>Appearance</h2>
+    <div class="row">
+      <label class="row-label" for="appearance">Theme</label>
+      <select id="appearance" class="w-md">
+        <option value="auto">Auto</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+      <span class="hint">Auto follows macOS. Applies to this app's own windows.</span>
     </div>
 
+    <h2>Camera &amp; microphone</h2>
+    <p>Passed to the remote machine as a virtual webcam and headset, for <strong>every</strong> tab and window. Off by default, because the KVM page is served over plain HTTP on your LAN.</p>
+    <label class="row">
+      <span class="row-label">Allow the camera</span>
+      <input type="checkbox" id="media-camera" class="w-auto">
+      <span class="hint">macOS asks for its own permission the first time.</span>
+    </label>
+    <label class="row">
+      <span class="row-label">Allow the microphone</span>
+      <input type="checkbox" id="media-microphone" class="w-auto">
+      <span class="hint"></span>
+    </label>
+
     <div class="shortcuts-info">
-      <p><kbd>Cmd</kbd> + <kbd>`</kbd> — Quit application (always works)</p>
+      <p><kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Q</kbd> — Quit application (always works)</p>
       <p><kbd>Cmd</kbd> + <kbd>,</kbd> — Open settings (always works)</p>
       <p><kbd>Cmd</kbd> + <kbd>R</kbd> — Reload session</p>
     </div>
@@ -393,7 +383,7 @@
 
   <!-- CSS Tab -->
   <div id="css" class="tab-content">
-    <p style="font-size: 12px; color: #888; margin-top: 0;">CSS rules injected into the remote session</p>
+    <p>CSS rules injected into the remote session.</p>
     <div class="list-container" id="css-list"></div>
     <div class="add-form">
       <input type="text" id="new-selector" placeholder="Selector (e.g. .class, #id)" class="small">
@@ -404,7 +394,7 @@
 
   <!-- Hotkeys Tab -->
   <div id="hotkeys" class="tab-content">
-    <p style="font-size: 12px; color: #888; margin-top: 0;">Hotkeys blocked from native handling (passed to remote session)</p>
+    <p>Hotkeys blocked from native handling, so they reach the remote session instead.</p>
     <div class="list-container" id="hotkeys-list"></div>
     <div class="add-form">
       <input type="text" id="new-hotkey" placeholder="Key (e.g. w, Tab)" class="small">
@@ -415,62 +405,58 @@
 
   <!-- Tabs Tab -->
   <div id="tabsview" class="tab-content">
-    <p style="font-size: 12px; color: #888; margin-top: 0;">Tabs let one window hold several sessions, switched from an edge strip. These settings apply to <strong style="color:#aaa;">every</strong> tab.</p>
+    <p>Tabs let one window hold several sessions, switched from an edge strip. These apply to <strong>every</strong> tab.</p>
 
-    <div class="opt-row">
-      <label class="switch">
-        <input type="checkbox" id="tabs-open-in-tabs">
-        <span>Open new servers in tabs</span>
-      </label>
-      <span class="opt-hint">Off: each server opens its own window.</span>
-    </div>
-    <div class="opt-row">
-      <label class="switch">
-        <input type="checkbox" id="tabs-show-strip">
-        <span>Show the tab strip</span>
-      </label>
-      <span class="opt-hint">Applies to every window.</span>
-    </div>
-    <div class="opt-row">
-      <label class="switch">
-        <input type="checkbox" id="tabs-suspend">
-        <span>Suspend tabs in the background</span>
-      </label>
-      <span class="opt-hint">Off: every tab keeps streaming. On saves bandwidth, and reconnects on the way back.</span>
-    </div>
+    <label class="row">
+      <span class="row-label">Open new servers in tabs</span>
+      <input type="checkbox" id="tabs-open-in-tabs" class="w-auto">
+      <span class="hint">Off: each server opens its own window.</span>
+    </label>
+    <label class="row">
+      <span class="row-label">Show the tab strip</span>
+      <input type="checkbox" id="tabs-show-strip" class="w-auto">
+      <span class="hint">Applies to every window.</span>
+    </label>
+    <label class="row">
+      <span class="row-label">Suspend tabs in the background</span>
+      <input type="checkbox" id="tabs-suspend" class="w-auto">
+      <span class="hint">Saves bandwidth; reconnects on the way back.</span>
+    </label>
 
-    <h2 style="margin-top: 18px;">Strip location</h2>
-    <div class="tabs-opts">
-      <div>
-        <label for="tabs-position">Position</label>
-        <select id="tabs-position" class="field-select">
-          <option value="right">Right edge</option>
-          <option value="left">Left edge</option>
-          <option value="top">Top edge</option>
-          <option value="bottom">Bottom edge</option>
-        </select>
-      </div>
-      <div>
-        <label for="tabs-overlay">Area</label>
-        <select id="tabs-overlay" class="field-select">
-          <option value="over">Over the content</option>
-          <option value="own">Own space (shrinks video)</option>
-        </select>
-      </div>
-      <div>
-        <label for="tabs-size">Thickness (px)</label>
-        <input type="number" id="tabs-size" min="40" max="240" step="2" style="width: 90px;">
-      </div>
+    <h2>Strip location</h2>
+    <div class="row">
+      <label class="row-label" for="tabs-position">Position</label>
+      <select id="tabs-position" class="w-md">
+        <option value="right">Right edge</option>
+        <option value="left">Left edge</option>
+        <option value="top">Top edge</option>
+        <option value="bottom">Bottom edge</option>
+      </select>
+      <span class="hint"></span>
+    </div>
+    <div class="row">
+      <label class="row-label" for="tabs-overlay">Area</label>
+      <select id="tabs-overlay" class="w-md">
+        <option value="over">Over the content</option>
+        <option value="own">Own space</option>
+      </select>
+      <span class="hint">Own space shrinks the video.</span>
+    </div>
+    <div class="row">
+      <label class="row-label" for="tabs-size">Thickness</label>
+      <input type="number" id="tabs-size" min="40" max="240" step="2" class="w-sm">
+      <span class="hint">Pixels.</span>
     </div>
 
-    <h2 style="margin-top: 20px;">Tabs</h2>
+    <h2>Reserved tabs</h2>
+    <p>A slot kept on the strip for a server, whether or not it is open. Servers opened later are added after these.</p>
     <div class="tab-head">
       <span></span><span>Server</span><span>URL</span><span>Name on tab</span><span></span>
     </div>
     <div class="list-container" id="tab-items-list"></div>
     <div class="add-form">
-      <button class="secondary" id="add-tab-item">Add tab</button>
-      <span class="opt-hint" style="align-self:center;">Drag ≡ to reorder. A blank name shows the tab's position instead. Servers opened later are added after these.</span>
+      <button id="add-tab-item">Add reserved tab</button>
+      <span class="hint">Drag &equiv; to reorder. A blank name shows the tab's position instead.</span>
     </div>
   </div>
 
@@ -503,7 +489,7 @@
     function renderServersList() {
       const container = document.getElementById('servers-list');
       if (!config.servers || config.servers.length === 0) {
-        container.innerHTML = '<div style="padding: 14px; color: #666; font-size: 12px;">No servers yet — add one below.</div>';
+        container.innerHTML = '<div class="empty-row">No servers yet — add one below.</div>';
         return;
       }
       container.innerHTML = config.servers.map((item, i) => `
@@ -570,7 +556,7 @@
       const items = (config.tabs && config.tabs.items) || [];
       const servers = config.servers || [];
       if (!items.length) {
-        container.innerHTML = '<div style="padding:14px;color:#666;font-size:12px;">No tabs yet — add one below.</div>';
+        container.innerHTML = '<div class="empty-row">No reserved tabs yet — add one below.</div>';
         return;
       }
       container.innerHTML = items.map((it, i) => {
@@ -655,6 +641,18 @@
       clearDropMarks();
     });
 
+    // Saved immediately, like the media switches: a theme you have to press Save
+    // to see is a theme you cannot try on.
+    function populateAppearance() {
+      const a = config.appearance;
+      document.getElementById('appearance').value =
+        (a === 'dark' || a === 'light') ? a : 'auto';
+    }
+    document.getElementById('appearance').addEventListener('change', (e) => {
+      config.appearance = e.target.value;
+      window.kvmAPI.saveConfig(config);
+    });
+
     function populateMediaControls() {
       if (!config.media) config.media = { camera: false, microphone: false };
       document.getElementById('media-camera').checked = !!config.media.camera;
@@ -711,6 +709,7 @@
       renderHotkeysList();
       populateTabsControls();
       populateMediaControls();
+      populateAppearance();
     }
 
     // Event delegation for toggles and deletes
@@ -928,6 +927,8 @@
     });
 
     loadSettings();
+
+    window.kvmAPI.onTheme((t) => { document.documentElement.dataset.theme = t; });
   </script>
 </body>
 </html>
